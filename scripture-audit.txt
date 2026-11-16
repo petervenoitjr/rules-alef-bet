@@ -1,0 +1,34 @@
+PASS | Psalm 119:11 | Thy word have I hid in mine heart, that I might not sin agai
+PASS | Psalm 119:1 (ALEPH) | Blessed are the undefiled in the way, who walk in the law of
+PASS | Psalm 119:9 (BETH) | Wherewithal shall a young man cleanse his way? by taking hee
+PASS | Psalm 119:17 (GIMEL) | Deal bountifully with thy servant, that I may live, and keep
+PASS | Psalm 119:25 (DALETH) | My soul cleaveth unto the dust: quicken thou me according to
+PASS | Psalm 119:33 (HE) | Teach me, O LORD, the way of thy statutes; and I shall keep 
+PASS | Psalm 119:41 (VAU) | Let thy mercies come also unto me, O LORD, even thy salvatio
+PASS | Psalm 119:49 (ZAIN) | Remember the word unto thy servant, upon which thou hast cau
+PASS | Psalm 119:57 (CHETH) | Thou art my portion, O LORD: I have said that I would keep t
+PASS | Psalm 119:65 (TETH) | Thou hast dealt well with thy servant, O LORD, according unt
+PASS | Psalm 119:73 (JOD) | Thy hands have made me and fashioned me: give me understandi
+PASS | Psalm 119:81 (CAPH) | My soul fainteth for thy salvation: but I hope in thy word.
+PASS | Psalm 119:89 (LAMED) | For ever, O LORD, thy word is settled in heaven.
+PASS | Psalm 119:97 (MEM) | O how love I thy law! it is my meditation all the day.
+PASS | Psalm 119:105 (NUN) | Thy word is a lamp unto my feet, and a light unto my path.
+PASS | Psalm 119:113 (SAMECH) | I hate vain thoughts: but thy law do I love.
+PASS | Psalm 119:121 (AIN) | I have done judgment and justice: leave me not to mine oppre
+PASS | Psalm 119:129 (PE) | Thy testimonies are wonderful: therefore doth my soul keep t
+PASS | Psalm 119:137 (TZADDE) | Righteous art thou, O LORD, and upright are thy judgments.
+PASS | Psalm 119:145 (KOPH) | I cried with my whole heart; hear me, O LORD: I will keep th
+PASS | Psalm 119:153 (RESH) | Consider mine affliction, and deliver me: for I do not forge
+PASS | Psalm 119:161 (SCHIN) | Princes have persecuted me without a cause: but my heart sta
+PASS | Psalm 119:169 (TAU) | Let my cry come near before thee, O LORD: give me understand
+PASS | rule NUN -> Psalm 119:105 | first verse of the part
+PASS | rule ALEF -> Psalm 119:1 | first verse of the part
+PASS | rule LAMED -> Psalm 119:89 | first verse of the part
+PASS | rule BET -> Psalm 119:9 | first verse of the part
+PASS | rule MEM -> Psalm 119:97 | first verse of the part
+PASS | rule YOD -> Psalm 119:73 | first verse of the part
+PASS | rule TSADI -> Psalm 119:137 | first verse of the part
+PASS | rule CHET -> Psalm 119:57 | first verse of the part
+PASS | rule TAV -> Psalm 119:169 | first verse of the part
+
+32 checks: 32 PASS, 0 FAIL

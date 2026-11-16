@@ -1,0 +1,5 @@
+node_modules/
+shots/
+dist/test.html
+src-data/*.xml
+src-data/*.json

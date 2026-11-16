@@ -1,0 +1,1421 @@
+<title>Alef-Bet Rules</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@200;300;400;500&family=Frank+Ruhl+Libre:wght@400;500&family=Noto+Serif+Hebrew:wght@400;500&display=swap" rel="stylesheet">
+<style>:root{color-scheme:dark;--bg:#03060f}html,body{height:100%;margin:0;background:var(--bg);overflow:hidden}body{display:flex;align-items:center;justify-content:center}canvas{display:block}</style>
+<script src="https://cdn.jsdelivr.net/npm/p5@2.3.4/lib/p5.min.js"></script>
+<script>
+// ALEF-BET RULES Version 0.2.0 (p5.js 2.3.4) -- SETTINGS
+// A Rules!-style memory game for the Alef-Bet app. DO-T gives one new rule per level; rules stack up.
+// Look: DOT-UI (AHAD Prototype 11) + DO-T rig + AHAD feel, from Peter's ahad-skills 1.0.0.
+// Made by Peter Venoit, Jr. - 2026.
+// ===== SETTINGS: STUDENTS, EDIT HERE =====
+
+// ---- PLAYER: how forgiving the game is ----
+const PLAYER_START_TIME = 20;          // CHALLENGE mode: seconds on the clock at the start (10-60)
+const PLAYER_TIME_MAX = 30;            // CHALLENGE mode: the clock can never go above this (15-90)
+const PLAYER_TIME_PER_CORRECT = 0.5;   // CHALLENGE mode: seconds added for each correct tap (0-2)
+const PLAYER_TIME_PENALTY = 1;         // CHALLENGE mode: seconds lost for each wrong tap (0-5)
+const PLAYER_HINT_AFTER = 2;           // TIMELESS mode: wrong taps on one rule before DO-T shows the rule by himself (1-5, 99 = never)
+const PLAYER_HINT_SECONDS = 3;         // how long a hint stays on screen (1-8 seconds)
+const PLAYER_HINT_SHOWS_TILES = true;  // true = a hint also puts amber brackets on the tiles that follow the rule
+const PLAYER_POINTS_CORRECT = 10;      // points for each correct tap (1-100)
+const PLAYER_POINTS_CLEAR = 50;        // points for clearing a board (0-500)
+const PLAYER_POINTS_COMBO_BONUS = 5;   // points for each combo bonus step (0-50)
+
+// ---- BOARD: the grid of letter tiles ----
+const BOARD_COLS = 4;                  // tiles across (3-5)
+const BOARD_ROWS = 4;                  // tiles down (3-5)
+const BOARD_TILE_SIZE = 112;           // size of one tile's art in pixels (80-120)
+const BOARD_TILE_GAP = 12;             // space between tiles in pixels (4-24)
+const BOARD_TOP = 300;                 // y position of the first row (260-340)
+const BOARD_MAX_COPIES = 2;            // most times one letter may appear on a board (1-3)
+const BOARD_MIN_FOR_RULE1 = 3;         // the board tries to leave at least this many tiles for rule 1 (1-8)
+const BOARD_TRIES = 400;               // how many random boards are tried to find a fair one (50-2000)
+const BOARD_POP_DELAY = 0.03;          // seconds between each tile popping in (0-0.1)
+
+// ---- CONTROLS ----
+const CONTROLS_TILE_HITBOX = 112;      // size of a tile's tap area in pixels (separate from the art; 80-124)
+
+// ---- DISPLAY ----
+const DISPLAY_W = 540;                 // the game's drawing size (portrait phone shape). Leave as is.
+const DISPLAY_H = 960;
+const DISPLAY_SHOW_VALUES = true;      // true = each tile shows its number value in the corner (players can change this in PAUSE)
+const DISPLAY_SHOW_NAMES = true;       // true = each tile shows the letter's name under it (players can change this in PAUSE)
+const DISPLAY_SHOW_RULE_NUMBER = true; // true = the panel says which rule number you are on (not what it says)
+const DISPLAY_HEBREW_FONT = '"Frank Ruhl Libre", "Noto Serif Hebrew", "Times New Roman", serif';   // font for the Hebrew letters
+const DISPLAY_POINTED_FONT = '"Noto Serif Hebrew", "Frank Ruhl Libre", "Times New Roman", serif';  // font for Hebrew words with vowel points (needs good niqqud support)
+const DISPLAY_GLYPH_SIZE = 60;         // size of the Hebrew letter on a tile (36-72)
+const DISPLAY_DOT_RADIUS = 46;         // DO-T's size in the game panel (30-60)
+const DISPLAY_DOT_TITLE_RADIUS = 92;   // DO-T's size on the title page (60-120)
+const DISPLAY_SCREEN_GLITCH = true;    // true = a small screen glitch on wrong taps (players can turn it off in PAUSE)
+
+// ---- AUDIO ----
+const AUDIO_ON = true;                 // sound on at the start (players can change it in PAUSE)
+const AUDIO_VOLUME = 0.35;             // master volume (0-1)
+
+// ---- TILE COLORS: the DOT-UI colors a tile can be (name shown in rules, DOT-UI palette key) ----
+const TILE_COLORS = [['CYAN', 'cy'], ['AMBER', 'am'], ['GREEN', 'gn'], ['VIOLET', 'vi']];
+
+// ---- RULES: one list per batch. Level 1 uses rule 1, level 2 uses rules 2 then 1, and so on.
+//      type 'seq'    tap every tile by value. dir 'high' = highest first, 'low' = lowest first (always rule 1)
+//      type 'color'  tiles of one color          type 'final'  letters that have a final form (Kaf Mem Nun Pe Tsadi)
+//      type 'group'  'ones' (1-9) 'tens' (10-90) 'hundreds' (100-400)
+//      type 'letter' one letter by name. Add verse: n (a Psalm 119 verse) and DO-T quotes that verse from the KJV
+//      type 'min'    letters worth at least this much
+//      type 'sound'  letters that make this sound ('m', 'sh', 't', 'k' ...; see LETTER_SOUNDS in the code)
+//      type 'silent' letters with no sound of their own (ALEF, AYIN)      type 'two'  letters with two sounds
+//      type 'and'    every part must be true     say: what DO-T says
+//   Batch options: title (shown in the HUD), intro (DO-T says it when the batch starts), hideNames (true = tiles hide letter names)
+//   DESIGN RULE: a NEWER rule must never include every letter of an OLDER rule (newer rules go first,
+//   so the older rule would never get a turn). Newer rules may only narrow older ones: ALEF after "the ones" is fine.
+const RULE_BATCHES = [
+  { title: 'NUMBERS', intro: 'Every letter is also a number. Learn the values and the groups.', rules: [
+    { type: 'seq', dir: 'high', say: 'Tap every letter by its value, highest first.' },
+    { type: 'color', color: 'AMBER', say: 'Tap the AMBER tiles.' },
+    { type: 'group', group: 'ones', say: 'Tap the ones (1 to 9).' },
+    { type: 'group', group: 'hundreds', say: 'Tap the hundreds (100 to 400).' },
+    { type: 'final', say: 'Tap the letters that have a final form.' },
+    { type: 'color', color: 'GREEN', say: 'Tap the GREEN tiles.' },
+    { type: 'letter', letter: 'ALEF', say: 'Tap ALEF.' },
+    { type: 'and', parts: [{ type: 'color', color: 'AMBER' }, { type: 'final' }], say: 'Tap AMBER letters that have a final form.' },
+    { type: 'letter', letter: 'SHIN', say: 'Tap SHIN.' },
+    { type: 'and', parts: [{ type: 'color', color: 'GREEN' }, { type: 'group', group: 'ones' }], say: 'Tap GREEN ones.' }
+  ] },
+  { title: 'ALEF-BET ORDER', intro: 'A new stack. This time rule 1 goes in Alef-Bet order, lowest value first.', rules: [
+    { type: 'seq', dir: 'low', say: 'Tap every letter in Alef-Bet order, lowest value first.' },
+    { type: 'color', color: 'VIOLET', say: 'Tap the VIOLET tiles.' },
+    { type: 'group', group: 'tens', say: 'Tap the tens (10 to 90).' },
+    { type: 'letter', letter: 'BET', say: 'Tap BET.' },
+    { type: 'color', color: 'CYAN', say: 'Tap the CYAN tiles.' },
+    { type: 'min', min: 50, say: 'Tap letters worth 50 or more.' },
+    { type: 'letter', letter: 'MEM', say: 'Tap MEM.' },
+    { type: 'and', parts: [{ type: 'color', color: 'VIOLET' }, { type: 'group', group: 'hundreds' }], say: 'Tap VIOLET hundreds.' },
+    { type: 'letter', letter: 'GIMEL', say: 'Tap GIMEL.' },
+    { type: 'and', parts: [{ type: 'color', color: 'GREEN' }, { type: 'group', group: 'ones' }], say: 'Tap GREEN ones.' }
+  ] },
+  { title: 'SOUNDS', intro: 'Rules about letter sounds. The names are hidden on the tiles, so read the shapes.', hideNames: true, rules: [
+    { type: 'seq', dir: 'low', say: 'Tap every letter in Alef-Bet order, lowest value first.' },
+    { type: 'silent', say: 'Tap the silent letters, ALEF and AYIN. They carry a vowel sound.' },
+    { type: 'sound', sound: 'm', say: 'Tap the letter that says M.' },
+    { type: 'two', say: 'Tap the letters with two sounds: BET, KAF, PE and SHIN.' },
+    { type: 'sound', sound: 'sh', say: 'Tap the letter that says SH.' },
+    { type: 'sound', sound: 'y', say: 'Tap the letter that says Y.' },
+    { type: 'sound', sound: 't', say: 'Tap the letters that say T. There are two!' },
+    { type: 'sound', sound: 'l', say: 'Tap the letter that says L.' },
+    { type: 'sound', sound: 'k', say: 'Tap the letters that say K. There are two!' },
+    { type: 'sound', sound: 'n', say: 'Tap the letter that says N.' }
+  ] },
+  { title: 'PSALM 119', intro: 'Psalm 119 has a part for every letter. DO-T reads a verse; find the letter that begins its part in Hebrew.', rules: [
+    { type: 'seq', dir: 'high', say: 'Tap every letter by its value, highest first.' },
+    { type: 'letter', letter: 'NUN', verse: 105 },
+    { type: 'letter', letter: 'ALEF', verse: 1 },
+    { type: 'letter', letter: 'LAMED', verse: 89 },
+    { type: 'letter', letter: 'BET', verse: 9 },
+    { type: 'letter', letter: 'MEM', verse: 97 },
+    { type: 'letter', letter: 'YOD', verse: 73 },
+    { type: 'letter', letter: 'TSADI', verse: 137 },
+    { type: 'letter', letter: 'CHET', verse: 57 },
+    { type: 'letter', letter: 'TAV', verse: 169 }
+  ] }
+];
+
+// ---- LETTER NAMES: what each letter's name means, from Peter's Alef-Bet book. Leave '' until checked against the book.
+//      Shown on the letter card as "NAME MEANING (traditional reading)". Example: ALEF: 'ox'.
+const LETTER_NAME_MEANINGS = { ALEF: '', BET: '', GIMEL: '', DALET: '', HE: '', VAV: '', ZAYIN: '', CHET: '', TET: '', YOD: '', KAF: '',
+  LAMED: '', MEM: '', NUN: '', SAMEKH: '', AYIN: '', PE: '', TSADI: '', QOF: '', RESH: '', SHIN: '', TAV: '' };
+
+// ---- DEBUG: off by default. Real values above are never changed by these ----
+const SHOW_DEBUG_BUTTON = true;        // true = DEBUG MENU button on the title page (set false before release)
+const DEBUG_ON = false;                // true = use the DEBUG values below from the start
+const DEBUG_START_LEVEL = 1;           // level a new game starts on when DEBUG_ON (1-40)
+const DEBUG_SHOW_RULE_TEXT = false;    // true = the panel always shows what the rule says
+const DEBUG_INFINITE_TIME = false;     // true = the CHALLENGE clock never runs down
+const DEBUG_SHOW_HITBOXES = false;     // true = draw each tile's tap area
+
+// ===== END SETTINGS: CODE BELOW =====
+
+
+// GENERATED by src-data/extract.py from the WLC (openscriptures/morphhb) and four KJV copies. Do not edit by hand: re-run extract.py.
+// PSALM119: one entry per letter (KJV heading, verses, first Hebrew word with vowel points, its Strong's number, the KJV first verse).
+// VERIFIED: acrostic facts checked by program; the game only shows a fact whose flag is true.
+const PSALM119 = [{"glyph": "א", "heading": "ALEPH", "headingAlt": "", "from": 1, "to": 8, "all8": true, "firstWord": "אַשְׁרֵי", "strongs": "H835", "kjv": "Blessed are the undefiled in the way, who walk in the law of the LORD."}, {"glyph": "ב", "heading": "BETH", "headingAlt": "", "from": 9, "to": 16, "all8": true, "firstWord": "בַּמֶּה", "strongs": "H4100", "kjv": "Wherewithal shall a young man cleanse his way? by taking heed thereto according to thy word."}, {"glyph": "ג", "heading": "GIMEL", "headingAlt": "", "from": 17, "to": 24, "all8": true, "firstWord": "גְּמֹל", "strongs": "H1580", "kjv": "Deal bountifully with thy servant, that I may live, and keep thy word."}, {"glyph": "ד", "heading": "DALETH", "headingAlt": "", "from": 25, "to": 32, "all8": true, "firstWord": "דָּבְקָה", "strongs": "H1692", "kjv": "My soul cleaveth unto the dust: quicken thou me according to thy word."}, {"glyph": "ה", "heading": "HE", "headingAlt": "", "from": 33, "to": 40, "all8": true, "firstWord": "הוֹרֵנִי", "strongs": "H3384", "kjv": "Teach me, O LORD, the way of thy statutes; and I shall keep it unto the end."}, {"glyph": "ו", "heading": "VAU", "headingAlt": "", "from": 41, "to": 48, "all8": true, "firstWord": "וִיבֹאֻנִי", "strongs": "H935", "kjv": "Let thy mercies come also unto me, O LORD, even thy salvation, according to thy word."}, {"glyph": "ז", "heading": "ZAIN", "headingAlt": "", "from": 49, "to": 56, "all8": true, "firstWord": "זְכֹר", "strongs": "H2142", "kjv": "Remember the word unto thy servant, upon which thou hast caused me to hope."}, {"glyph": "ח", "heading": "CHETH", "headingAlt": "", "from": 57, "to": 64, "all8": true, "firstWord": "חֶלְקִי", "strongs": "H2506", "kjv": "Thou art my portion, O LORD: I have said that I would keep thy words."}, {"glyph": "ט", "heading": "TETH", "headingAlt": "", "from": 65, "to": 72, "all8": true, "firstWord": "טוֹב", "strongs": "H2896", "kjv": "Thou hast dealt well with thy servant, O LORD, according unto thy word."}, {"glyph": "י", "heading": "JOD", "headingAlt": "", "from": 73, "to": 80, "all8": true, "firstWord": "יָדֶיךָ", "strongs": "H3027", "kjv": "Thy hands have made me and fashioned me: give me understanding, that I may learn thy commandments."}, {"glyph": "כ", "heading": "CAPH", "headingAlt": "", "from": 81, "to": 88, "all8": true, "firstWord": "כָּלְתָה", "strongs": "H3615", "kjv": "My soul fainteth for thy salvation: but I hope in thy word."}, {"glyph": "ל", "heading": "LAMED", "headingAlt": "", "from": 89, "to": 96, "all8": true, "firstWord": "לְעוֹלָם", "strongs": "H5769", "kjv": "For ever, O LORD, thy word is settled in heaven."}, {"glyph": "מ", "heading": "MEM", "headingAlt": "", "from": 97, "to": 104, "all8": true, "firstWord": "מָה", "strongs": "H4100", "kjv": "O how love I thy law! it is my meditation all the day."}, {"glyph": "נ", "heading": "NUN", "headingAlt": "", "from": 105, "to": 112, "all8": true, "firstWord": "נֵר", "strongs": "H5216", "kjv": "Thy word is a lamp unto my feet, and a light unto my path."}, {"glyph": "ס", "heading": "SAMECH", "headingAlt": "", "from": 113, "to": 120, "all8": true, "firstWord": "סֵעֲפִים", "strongs": "H5588", "kjv": "I hate vain thoughts: but thy law do I love."}, {"glyph": "ע", "heading": "AIN", "headingAlt": "", "from": 121, "to": 128, "all8": true, "firstWord": "עָשִׂיתִי", "strongs": "H6213", "kjv": "I have done judgment and justice: leave me not to mine oppressors."}, {"glyph": "פ", "heading": "PE", "headingAlt": "", "from": 129, "to": 136, "all8": true, "firstWord": "פְּלָאוֹת", "strongs": "H6382", "kjv": "Thy testimonies are wonderful: therefore doth my soul keep them."}, {"glyph": "צ", "heading": "TZADDE", "headingAlt": "TZADDI", "from": 137, "to": 144, "all8": true, "firstWord": "צַדִּיק", "strongs": "H6662", "kjv": "Righteous art thou, O LORD, and upright are thy judgments."}, {"glyph": "ק", "heading": "KOPH", "headingAlt": "", "from": 145, "to": 152, "all8": true, "firstWord": "קָרָאתִי", "strongs": "H7121", "kjv": "I cried with my whole heart; hear me, O LORD: I will keep thy statutes."}, {"glyph": "ר", "heading": "RESH", "headingAlt": "", "from": 153, "to": 160, "all8": true, "firstWord": "רְאֵה", "strongs": "H7200", "kjv": "Consider mine affliction, and deliver me: for I do not forget thy law."}, {"glyph": "ש", "heading": "SCHIN", "headingAlt": "", "from": 161, "to": 168, "all8": true, "firstWord": "שָׂרִים", "strongs": "H8269", "kjv": "Princes have persecuted me without a cause: but my heart standeth in awe of thy word."}, {"glyph": "ת", "heading": "TAU", "headingAlt": "", "from": 169, "to": 176, "all8": true, "firstWord": "תִּקְרַב", "strongs": "H7126", "kjv": "Let my cry come near before thee, O LORD: give me understanding according to thy word."}];
+const VERIFIED = {"ps119Verses": 176, "ps119Ok": true, "prov31": true, "lam1": true, "lam24PeAyin": true, "lam3": true, "ps145NoNun": true};
+
+
+// ============================================================
+// DOT-UI style  --  drop-in HUD + menu kit for p5.js 2.3.4
+// Lifted from ALL HUMANS ARE DEAD Prototype 11 (v7_vis_base.js + v7_ui.js),
+// with the game-only parts taken out so any sketch can use it.
+// Paste this whole block into sketch.js (above setup) or load it as its own file.
+// Needs: a canvas (any size). Uses width/height, so it works at any resolution.
+// Call DUI.frame() at the top of draw(), DUI.tap(x, y) from touchStarted/mousePressed,
+// and image(DUI.fx(), 0, 0, width, height) as the very last thing in draw().
+// ============================================================
+
+// ---------- palette (never invent new colors; use these) ----------
+const TR = {
+  cy: '#19E3FF',   // cyan     : default UI line, PLEX speaker, normal state
+  cy2: '#8CF6FF',  // pale cyan: titles, headings, secondary labels
+  mg: '#FF3FD0',   // magenta  : emergency / danger-to-do / terminals / last menu item
+  am: '#FFB938',   // amber    : selected, interact, money, ABB speaker, "do this now"
+  gn: '#3CFFB0',   // green    : online, done, fixed, boost ready
+  vi: '#8E7BFF',   // violet   : secondary actions (switch, restart, customize)
+  red: '#FF4D5E',  // red      : low power, boss, keys, failure
+  bg: '#03060f'    // near-black blue background
+};
+const TR_OFF = '#58698f';         // disabled / off button color
+const TR_DIM = '#41557a';         // locked / unknown
+const TR_TXT = 'rgba(190,230,255,0.85)';   // body text on dark
+const TR_SUB = 'rgba(160,200,230,0.7)';    // small stats / footnotes
+const TR_GOLD = '#FFE9B0';        // big money numbers
+const HUDFONT = '"Exo 2", Rajdhani, "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+
+// ---------- low-level helpers ----------
+function glow(c, b) { drawingContext.shadowColor = c; drawingContext.shadowBlur = b; }
+function noGlow() { drawingContext.shadowBlur = 0; drawingContext.shadowColor = 'rgba(0,0,0,0)'; }
+function lspace(px) { try { drawingContext.letterSpacing = px + 'px'; } catch (_) {} }
+function rgba(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+function hex7(c) { return (typeof c === 'string' && c.length === 7 && c[0] === '#') ? c : TR.cy; }   // rgba() needs #rrggbb
+
+function chamfer(x, y, w, h, c, g) {        // the signature shape: a rectangle with 45-degree cut corners
+  const G = g || window; G.beginShape();
+  G.vertex(x + c, y); G.vertex(x + w - c, y); G.vertex(x + w, y + c); G.vertex(x + w, y + h - c);
+  G.vertex(x + w - c, y + h); G.vertex(x + c, y + h); G.vertex(x, y + h - c); G.vertex(x, y + c); G.endShape(CLOSE);
+}
+function hexagon(cx, cy, r, rot, g) {       // rot = HALF_PI gives a flat-sided (pointy-top) hex, used for buttons
+  const G = g || window; G.beginShape();
+  for (let i = 0; i < 6; i++) { const a = rot + i * Math.PI / 3; G.vertex(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+  G.endShape(CLOSE);
+}
+function corners(x, y, w, h, l) {           // four corner brackets (call with stroke set)
+  line(x, y + l, x, y); line(x, y, x + l, y); line(x + w - l, y, x + w, y); line(x + w, y, x + w, y + l);
+  line(x + w, y + h - l, x + w, y + h); line(x + w, y + h, x + w - l, y + h); line(x + l, y + h, x, y + h); line(x, y + h, x, y + h - l);
+}
+
+// ---------- text ----------
+function setFont(sz, wt) { textFont(HUDFONT); textSize(sz); try { textWeight(wt || 300); } catch (_) {} }
+// txt(string, x, y, size, color, align, weight, letterSpacing) -- the only way text is drawn in this style
+function txt(str, x, y, size, col, al, wt, ls) { setFont(size, wt); lspace(ls || 0); fill(col); noStroke(); textAlign(al || LEFT, CENTER); text(str, x, y); lspace(0); }
+function wrapTxt(str, x, y, w, size, col, lead, al, wt) {   // word wrap inside width w; returns y after last line
+  setFont(size, wt || 300); const words = String(str).split(' '); let ln = '', yy = y; fill(col); noStroke(); textAlign(al || LEFT, TOP);
+  const ax = al === CENTER ? x + w / 2 : al === RIGHT ? x + w : x;
+  for (const wd of words) { const t = ln ? ln + ' ' + wd : wd; if (textWidth(t) > w && ln) { text(ln, ax, yy); yy += lead; ln = wd; } else ln = t; }
+  if (ln) { text(ln, ax, yy); yy += lead; } return yy;
+}
+
+// ---------- tap targets (rebuilt every frame) ----------
+const DUI = { list: [], prev: [], t: 0, fxG: null, fxW: 0, fxH: 0, toast: { text: '', t: 0 }, banner: { text: '', t: 0, kicker: 'SECTOR' } };
+DUI.frame = function () { DUI.prev = DUI.list; DUI.list = []; DUI.t += (deltaTime || 16) / 1000; if (DUI.toast.t > 0) DUI.toast.t -= deltaTime / 1000; if (DUI.banner.t > 0) DUI.banner.t -= deltaTime / 1000; };
+DUI.tap = function (x, y) {                 // returns true if a button took the tap
+  for (let i = DUI.prev.length - 1; i >= 0; i--) { const b = DUI.prev[i]; if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { b.fn(); return true; } }
+  return false;
+};
+DUI.say = function (text, secs) { DUI.toast.text = text; DUI.toast.t = secs || 3; };            // 'PLEX: ...' / 'ABB: ...'
+DUI.sector = function (text, kicker) { DUI.banner.text = text; DUI.banner.t = 3.2; DUI.banner.kicker = kicker || 'SECTOR'; };
+
+// ---------- menu button: chamfered, thin line, spaced caps ----------
+// o: { col, hot (selected), alpha, size (15), wt (300), ls (letter spacing 4), c (chamfer 9) }
+function uiBtn(x, y, w, h, label, fn, o = {}) {
+  const col = o.col || TR.cy, a = o.alpha === undefined ? 1 : o.alpha, hot = o.hot;
+  drawingContext.globalAlpha = a;
+  stroke(col); strokeWeight(hot ? 2 : 1.2); fill(hot ? rgba(hex7(col), 0.18) : 'rgba(3,10,30,0.55)'); chamfer(x, y, w, h, o.c || 9);
+  noStroke(); fill(col); setFont(o.size || 15, o.wt || 300); lspace(o.ls === undefined ? 4 : o.ls); textAlign(CENTER, CENTER);
+  text(label, x + w / 2 + (o.ls === 0 ? 0 : 2), y + h / 2); lspace(0);   // +2 nudges spaced caps back to visual centre
+  drawingContext.globalAlpha = 1; if (fn) DUI.list.push({ x, y, w, h, fn });
+}
+
+// ---------- round action button (thumb button): hexagon with drop shadow, inner hex, optional cooldown ring ----------
+// b: { x, y, r }  ring: 0..1 cooldown fill (1 = ready, no ring drawn)
+function hexBtn(b, label, col, ts = 12, pulse = false, ring = 1, fn) {
+  const r = b.r * (pulse ? 1 + Math.sin(DUI.t * 6) * 0.05 : 1), c3 = hex7(col);
+  noStroke(); fill(0, 0, 0, 70); hexagon(b.x, b.y + 3, r + 1, HALF_PI);
+  glow(col, pulse ? 14 : 6); stroke(col); strokeWeight(1.6); fill(3, 10, 30, 190); hexagon(b.x, b.y, r, HALF_PI); noGlow();
+  noFill(); stroke(rgba(c3, 0.28)); strokeWeight(1); hexagon(b.x, b.y, r - 6, HALF_PI);
+  if (ring < 1) { noFill(); stroke(255, 255, 255, 30); strokeWeight(3); circle(b.x, b.y, r * 2 + 10); stroke(col); strokeWeight(2); arc(b.x, b.y, r * 2 + 10, r * 2 + 10, -HALF_PI, -HALF_PI + TWO_PI * ring); }
+  noStroke(); fill(col); setFont(ts, 400); lspace(1.5); textAlign(CENTER, CENTER); text(label, b.x + 0.7, b.y); lspace(0);
+  if (fn) DUI.list.push({ x: b.x - b.r, y: b.y - b.r, w: b.r * 2, h: b.r * 2, fn });
+}
+
+// ---------- small chip (tool select, tabs) ----------
+function chip(x, y, w, h, label, on, fn) {
+  stroke(on ? TR.am : 'rgba(25,227,255,0.35)'); strokeWeight(on ? 1.6 : 1); fill(on ? 'rgba(255,185,56,0.12)' : 'rgba(3,10,30,0.45)'); chamfer(x, y, w, h, 5);
+  txt(label, x + w / 2, y + h / 2 + 0.5, 8, on ? TR.am : 'rgba(160,220,255,0.7)', CENTER, 400, 2);
+  if (fn) DUI.list.push({ x, y, w, h, fn });
+}
+
+// ---------- meter: thin outlined bar, glowing fill, tick marks, big number beside ----------
+// v, max: current and full. lost: 0..1 of the bar that is gone for good (hatched red). label e.g. 'PWR'
+function meter(x, y, w, v, max, label, o = {}) {
+  const f = Math.max(0, v / max), lost = o.lost || 0, ticks = o.ticks || 13;
+  const col = o.col || (f < 0.25 ? (Math.sin(DUI.t * 10) > 0 ? TR.red : '#ff9aa2') : f < 0.5 ? TR.am : TR.cy);
+  if (label) txt(label, x, y - 16, 9, 'rgba(160,240,255,0.85)', LEFT, 400, 4);
+  stroke(25, 227, 255, 70); strokeWeight(1); noFill(); rect(x, y, w, 6);
+  if (lost > 0) { const lx = x + w * (1 - lost); noStroke(); fill(255, 77, 94, 35); rect(lx, y, w * lost, 6); stroke(255, 77, 94, 110); for (let xx = lx; xx < x + w; xx += 5) line(xx, y + 6, xx + 4, y); }
+  noStroke(); glow(col, 8); fill(col); rect(x + 1, y + 1, Math.max(0, (w - 2) * Math.min(f, 1 - lost)), 4); noGlow();
+  stroke(25, 227, 255, 100); strokeWeight(1); for (let i = 1; i < ticks; i++) { const tx = x + w * i / ticks; line(tx, y + 6, tx, y + 10); }
+  if (o.number !== false) txt(String(Math.ceil(v)), x + w + 12, y + 3, 22, col, LEFT, 200, 1);
+}
+// thin progress line (timers, noise, calm): 1px outline, 2-3px fill
+function thinBar(x, y, w, f, col) { stroke(255, 255, 255, 60); strokeWeight(1); noFill(); rect(x, y, w, 5); noStroke(); fill(col); rect(x + 1, y + 1, (w - 2) * Math.max(0, Math.min(1, f)), 3); }
+// row of small pips (circuits fixed, upgrade levels)
+function pips(cx, y, n, done, col) {
+  for (let i = 0; i < n; i++) { const x = cx - n * 8 + i * 16 + 2, on = done > i; stroke(on ? (col || TR.gn) : 'rgba(25,227,255,0.5)'); strokeWeight(1.2); fill(on ? rgba(hex7(col || TR.gn), 0.6) : 'rgba(25,227,255,0.05)'); rect(x, y, 10, 5, 1); }
+}
+// counter with hex icon (bytes / coins)
+function counter(rx, y, n, label) {
+  const ix = rx - 78; noFill(); stroke(TR.am); strokeWeight(1.6); hexagon(ix, y, 9, HALF_PI); noStroke(); fill(TR.am); hexagon(ix, y, 3.5, HALF_PI);
+  txt(String(n).padStart(4, '0'), rx, y, 20, TR_GOLD, RIGHT, 200, 2); txt(label || 'BYTES', ix + 12, y - 18, 8, 'rgba(255,185,56,0.8)', LEFT, 400, 3);
+}
+// pause "gear": hex outline with two bars
+function pauseHex(x, y, fn) {
+  noFill(); stroke(TR.cy); strokeWeight(1.6); hexagon(x, y, 20, HALF_PI); noStroke(); fill(TR.cy2); rect(x - 5, y - 7, 3.5, 14, 1); rect(x + 1.5, y - 7, 3.5, 14, 1);
+  if (fn) DUI.list.push({ x: x - 23, y: y - 23, w: 46, h: 46, fn });
+}
+
+// ---------- overlays ----------
+function dim(a) { noStroke(); fill(2, 6, 20, a); rect(0, 0, width, height); }
+function panel(x, y, w, h, col) { stroke(col || TR.cy); strokeWeight(1.3); fill(3, 9, 28, 240); chamfer(x, y, w, h, 16); corners(x + 6, y + 6, w - 12, h - 12, 14); }
+function gridBack(step, a) { stroke(25, 227, 255, a === undefined ? 18 : a); strokeWeight(1); for (let x = 0; x <= width; x += step || 30) line(x, 0, x, height); for (let y = 0; y <= height; y += step || 30) line(0, y, width, y); }
+// page heading: big thin pale-cyan caps + the bent underline (straight, then a 45-degree kick down-right)
+function heading(title, y) {
+  const cx = width / 2; txt(title, cx, y, 36, TR.cy2, CENTER, 200, 10);
+  stroke(TR.cy); strokeWeight(1.2); line(cx - 150, y + 38, cx + 60, y + 38); line(cx + 60, y + 38, cx + 84, y + 60);
+}
+function rule(cx, y, half, a) { stroke(25, 227, 255, a || 150); strokeWeight(1); line(cx - half, y, cx + half, y); }
+function closeX(x, y, fn) { noFill(); stroke(TR.cy); strokeWeight(1.2); circle(x, y, 40); line(x - 7, y - 7, x + 7, y + 7); line(x + 7, y - 7, x - 7, y + 7); if (fn) DUI.list.push({ x: x - 20, y: y - 20, w: 40, h: 40, fn }); }
+// rotating amber corner brackets around the thing you can interact with
+function focusBrackets(x, y, s0) { push(); translate(x, y); rotate(DUI.t * 1.4); const s = (s0 || 38) + Math.sin(DUI.t * 6) * 3; glow(TR.am, 10); stroke(TR.am); strokeWeight(2); noFill(); corners(-s, -s, s * 2, s * 2, 12); noGlow(); pop(); }
+// world label under an object: tiny spaced caps in the object's color
+function tag(str, x, y, col) { txt(str, x, y, 9, col || TR.cy, CENTER, 400, 3); }
+
+// ---------- comm toast (PLEX = cyan, ABB = amber, other = magenta) ----------
+function speakerColor(t) { return t.startsWith('PLEX') ? TR.cy : t.startsWith('ABB') ? TR.am : TR.mg; }
+function drawToast(y) {
+  const T = DUI.toast; if (T.t <= 0) return;
+  const a = Math.min(1, T.t * 2), sc = speakerColor(T.text); let body = T.text, who = '';
+  const m = /^([A-Z][A-Z0-9 ]{1,10}):\s*/.exec(T.text); if (m) { who = m[1]; body = T.text.slice(m[0].length); }
+  setFont(12, 300); const tw = width - 40, yy = y === undefined ? 100 : y;
+  drawingContext.globalAlpha = a; const lines = Math.max(1, Math.ceil(textWidth(body) / (tw - 52))), hh = 22 + lines * 17;
+  stroke(rgba(sc, 0.7)); strokeWeight(1.2); fill(3, 8, 24, 215); chamfer(20, yy, tw, hh, 8);
+  noStroke(); fill(sc); rect(24, yy + 6, 2, hh - 12);
+  if (who) txt(who, 36, yy + 12, 8, sc, LEFT, 500, 3);
+  wrapTxt(body, 36, yy + (who ? 20 : 8), tw - 30, 12, 'rgba(240,248,255,0.95)', 16);
+  drawingContext.globalAlpha = 1;
+}
+// ---------- area banner: tiny kicker, big white thin name, rule under it ----------
+function drawBanner(y) {
+  const B = DUI.banner; if (B.t <= 0) return; const cy = y || 180;
+  const a = Math.max(0, Math.min(1, B.t * 1.5, (3.2 - B.t) * 3));
+  drawingContext.globalAlpha = a; txt(B.kicker, width / 2, cy - 12, 10, TR.cy2, CENTER, 400, 8);
+  txt(B.text, width / 2, cy + 16, 21, '#FFFFFF', CENTER, 200, 5); rule(width / 2, cy + 40, 110, 160); drawingContext.globalAlpha = 1;
+}
+
+// ---------- virtual stick: ring + inner ring + 24 tick marks, knob with crosshair ----------
+function drawStickUI(bx, by, kx, ky, R) {
+  R = R || 62; push(); translate(bx, by); noFill(); stroke(25, 227, 255, 120); strokeWeight(1.2); circle(0, 0, R * 2); stroke(25, 227, 255, 50); circle(0, 0, R * 1.1);
+  for (let i = 0; i < 24; i++) { const a = i / 24 * TWO_PI, l = i % 6 === 0 ? 8 : 3; stroke(25, 227, 255, 110); line(Math.cos(a) * (R + 3), Math.sin(a) * (R + 3), Math.cos(a) * (R + 3 + l), Math.sin(a) * (R + 3 + l)); }
+  pop(); noStroke(); fill(25, 227, 255, 50); circle(kx, ky, 52); stroke(TR.cy2); strokeWeight(1.6); noFill(); circle(kx, ky, 52);
+  strokeWeight(1); line(kx - 8, ky, kx + 8, ky); line(kx, ky - 8, kx, ky + 8);
+}
+
+// ---------- scene transition: shutters close from top and bottom with glowing edge + grid ----------
+// k: 0 (open) .. 1 (closed). Ease it yourself: k = k * k * (3 - 2 * k)
+function shutters(k, label) {
+  const h = (height / 2) * k; noStroke(); fill(3, 8, 22); rect(0, 0, width, h); rect(0, height - h, width, h);
+  if (k > 0.02) { glow(TR.cy, 14); stroke(TR.cy); strokeWeight(2); line(0, h, width, h); line(0, height - h, width, height - h); noGlow();
+    stroke(25, 227, 255, 40); strokeWeight(1); for (let x = 0; x < width; x += 40) { line(x, 0, x, h); line(x, height - h, x, height); }
+    if (k > 0.9 && label) txt(label, width / 2, height / 2, 14, TR.cy2, CENTER, 300, 6); }
+}
+
+// ---------- title backdrop: drifting stars + faint horizon arcs + rotating tick ring ----------
+const DUI_STARS = []; function duiStars(n) { DUI_STARS.length = 0; for (let i = 0; i < (n || 120); i++) DUI_STARS.push({ x: Math.random() * width, y: Math.random() * height, r: Math.random() * 1.6 + 0.4, a: Math.random() * 0.6 + 0.2, d: Math.random() * 2 + 0.3 }); }
+function titleBackdrop() {
+  background(TR.bg); noStroke(); if (!DUI_STARS.length) duiStars();
+  for (const s of DUI_STARS) { const sx = (((s.x + DUI.t * 4 * s.d) % width) + width) % width; fill(200, 230, 255, s.a * 255); circle(sx, s.y, s.r); }
+  noFill(); for (let k = 0; k < 4; k++) { stroke(25, 227, 255, 18 - k * 3); strokeWeight(2); const d = width * 1.3 + k * 380; arc(width / 2, height * 1.3, d, d, Math.PI * 1.1, Math.PI * 1.9); }
+}
+function tickRing(cx, cy, r) {
+  push(); translate(cx, cy); noFill(); stroke(25, 227, 255, 90); strokeWeight(1.2); circle(0, 0, r * 2); stroke(25, 227, 255, 40); circle(0, 0, r * 2 + 50);
+  rotate(DUI.t * 0.12); stroke(25, 227, 255, 120); for (let i = 0; i < 48; i++) { const a = i / 48 * TWO_PI, l = i % 6 === 0 ? 11 : 5; line(Math.cos(a) * (r + 26), Math.sin(a) * (r + 26), Math.cos(a) * (r + 26 + l), Math.sin(a) * (r + 26 + l)); } pop();
+}
+
+// ---------- screen finish: scanlines + vignette, built once, drawn LAST every frame ----------
+DUI.fx = function () {
+  if (!DUI.fxG || DUI.fxW !== width || DUI.fxH !== height) {
+    DUI.fxW = width; DUI.fxH = height; DUI.fxG = createGraphics(width, height); DUI.fxG.pixelDensity(1); const c = DUI.fxG.drawingContext;
+    c.clearRect(0, 0, width, height); c.fillStyle = 'rgba(0,10,24,0.16)'; for (let y = 0; y < height; y += 3) c.fillRect(0, y, width, 1);
+    const g = c.createRadialGradient(width / 2, height / 2, height * 0.32, width / 2, height / 2, height * 0.78);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,4,14,0.62)'); c.fillStyle = g; c.fillRect(0, 0, width, height);
+  }
+  return DUI.fxG;
+};
+// ============================== end DOT-UI ==============================
+
+
+// =====================================================================
+// DO-T (Dot)  v1.0.0  (LightHeart Labs module; see README.md here)
+// A cheerful robot from All Humans Are Dead (AHAD v10, Prototype 11): the original vector rig, unchanged.
+// =====================================================================
+const DOT_VERSION = '1.0.0';
+// dot_rig.js
+// ============================================================
+// ============================================================
+// DO-T  -  pseudo-3D vector rig for p5.js 2.x
+// Everything is flat 2D shapes, but features (visor, face, arm pods, fins, seams)
+// live on an imaginary sphere and are re-projected every frame, so the visor and
+// face wrap around the body and the pods / fins swing like they are real 3D.
+// Art units = pixels of the reference hero art (body radius 315). draw() scales it.
+// Tools: 'light' | 'ext' | 'flame' | 'empty'
+// Faces: happy neutral strained tired sad heart content unimpressed defeated
+// ============================================================
+const DOT_REF = 315;
+const D2R = Math.PI / 180;
+const DOTC = {
+  shade: '#CDE8EF', hi: '#E9F5F4', hi2: '#F6FBFA', rim: '#62CAF0', pale: '#BFE3F0', blue: '#2E86C8', blue2: '#1B6FB0',
+  deep: '#1362A3', navy: '#16315A', screen: '#5FCAEE', face: '#0C2243', hl: '#BCE4F6', white: '#EDF6F5',
+  or1: '#FFC878', or2: '#F79454', amber: '#F6B04E'
+};
+const FACE_ALIAS = { alert: 'neutral', wide: 'neutral', worried: 'tired', asleep: 'content' };
+
+// ---- shape samplers (visor-local art px) ----
+function dEll(cx, cy, rx, ry, n = 30) { const o = []; for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; o.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]); } return o; }
+function dPill(cx, cy, w, h, n = 18) { const r = h / 2, o = []; for (let i = 0; i <= n; i++) { const a = -Math.PI / 2 + i / n * Math.PI; o.push([cx + w / 2 - r + Math.cos(a) * r, cy + Math.sin(a) * r]); } for (let i = 0; i <= n; i++) { const a = Math.PI / 2 + i / n * Math.PI; o.push([cx - w / 2 + r + Math.cos(a) * r, cy + Math.sin(a) * r]); } return o; }
+function dArc(cx, cy, r, a0, a1, n = 16) { const o = []; for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; o.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return o; }
+function dBez(p0, p1, p2, p3, n = 14) { const o = []; for (let i = 0; i <= n; i++) { const t = i / n, u = 1 - t; o.push([u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]); } return o; }
+const HEART_SIZE = 38;      // LOVE face: how big the heart eyes are (half the width of one heart, in rig units; the character sheet is about 38)
+function dHeart(cx, cy, s) { const o = []; for (let i = 0; i < 40; i++) { const t = i / 40 * Math.PI * 2; o.push([cx + s * 16 * Math.pow(Math.sin(t), 3) / 16 * 16 / 16, cy - s * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16 * 16 / 16]); } return o; }
+const mirrorX = (pts) => pts.map(p => [-p[0], p[1]]);
+
+class DotRig {
+  constructor() {
+    this.restYaw = 29 * D2R;
+    this.yaw = this.restYaw; this.yawV = 0; this.pitch = 0; this.roll = 0;
+    this.facing = 1; this.t = Math.random() * 10; this.blinkT = 0; this.nextBlink = 2.5;
+    this.gx = 0; this.gy = 0; this.speed = 0; this.velAng = 0; this.thrust = 0; this.flutter = 0; this.bob = 0;
+    this.finPhase = Math.random() * 6; this.turnPulse = 0;
+    this.fins = [
+      { p: [-0.349, -0.873, -0.34], k: 1.0, w: 230, h: 120, ang: -12, col: DOTC.blue, back: true },
+      { p: [0.97, 0.13, -0.2], k: 1.1, w: 84, h: 160, ang: 90, col: DOTC.blue2, back: true },
+      { p: [-0.63, 0.72, -0.29], k: 1.2, w: 120, h: 250, ang: 34, col: DOTC.deep, back: true },
+      { p: [0.03, 1.0, -0.2], k: 1.06, w: 175, h: 95, ang: 0, col: DOTC.deep, back: true },
+      { p: [-0.9, -0.25, -0.35], k: 1.05, w: 86, h: 150, ang: 90, col: DOTC.blue2, back: true } // mirror of right fin, shows when facing left
+    ];
+  }
+
+  // ---------- animation ----------
+  update(dt, vx, vy, aim, opt = {}) {
+    this.t += dt; const maxS = opt.maxSpeed || 235;
+    const sp = Math.hypot(vx, vy); this.speed = sp; if (sp > 8) this.velAng = Math.atan2(vy, vx);
+    if (Math.abs(vx) > 25) this.facing = Math.sign(vx);
+    else if (opt.aimFacing && Math.abs(Math.cos(aim)) > 0.35) this.facing = Math.sign(Math.cos(aim));
+    const sway = Math.sin(this.t * 0.9) * 0.05;
+    const target = this.facing * this.restYaw + Math.max(-1, Math.min(1, vx / maxS)) * 0.2 * (this.facing >= 0 ? 1 : 1) + sway;
+    const k = 120, c = 2 * Math.sqrt(k) * 0.55;
+    this.yawV += ((target - this.yaw) * k - this.yawV * c) * dt; this.yaw += this.yawV * dt;
+    const pt = Math.max(-1, Math.min(1, -vy / maxS)) * 0.38 + Math.sin(this.t * 0.7) * 0.03;
+    this.pitch += (pt - this.pitch) * Math.min(1, dt * 7);
+    const idle = 1 - this.thrust;
+    this.roll += (Math.max(-1, Math.min(1, vx / maxS)) * 0.18 + Math.sin(this.t * 3.49) * 0.09 * idle - this.roll) * Math.min(1, dt * 6);
+    this.thrust += (Math.min(1, sp / maxS) - this.thrust) * Math.min(1, dt * 8);
+    this.bob = Math.sin(this.t * 3.49) * 0.035 * (0.4 + 0.6 * (1 - this.thrust)) + Math.sin(this.t * 1.3) * 0.008;
+    this.flutter = Math.sin(this.t * (6 + 10 * this.thrust) + this.finPhase) * (3 + 7 * this.thrust);
+    this.blinkT -= dt; this.nextBlink -= dt;
+    if (this.nextBlink <= 0) { this.blinkT = 0.14; this.nextBlink = 2.2 + Math.random() * 3.2; }
+    const gx = Math.cos(aim) * (opt.gazeAim ? 1 : 0) + vx / maxS, gy = Math.sin(aim) * (opt.gazeAim ? 1 : 0) + vy / maxS;
+    this.gx += (Math.max(-1, Math.min(1, gx)) * 9 - this.gx) * Math.min(1, dt * 8);
+    this.gy += (Math.max(-1, Math.min(1, gy)) * 6 - this.gy) * Math.min(1, dt * 8);
+  }
+
+  // ---------- projection ----------
+  _view(b, yaw = this.yaw, pitch = this.pitch) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const x = b[0] * cy + b[2] * sy, z = -b[0] * sy + b[2] * cy, y = b[1];
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    return [x, y * cp - z * sp, y * sp + z * cp];
+  }
+  _bodyFromRest(v) { return this._view(v, -this.restYaw, 0); }
+  _map(lon, lat, roll, k, pts) {
+    const a = lon * D2R, b = lat * D2R;
+    const c = [Math.cos(b) * Math.sin(a), -Math.sin(b), Math.cos(b) * Math.cos(a)];
+    const E = [Math.cos(a), 0, -Math.sin(a)], S = [Math.sin(b) * Math.sin(a), Math.cos(b), Math.sin(b) * Math.cos(a)];
+    const cr = Math.cos(roll * D2R), sr = Math.sin(roll * D2R), out = [];
+    for (const [u, v] of pts) {
+      const uu = u * cr - v * sr, vv = u * sr + v * cr, rho = Math.hypot(uu, vv) / DOT_REF;
+      let d = [0, 0, 0]; if (rho > 1e-7) { const ca = uu / (rho * DOT_REF), sa = vv / (rho * DOT_REF); d = [ca * E[0] + sa * S[0], ca * E[1] + sa * S[1], ca * E[2] + sa * S[2]]; }
+      const sr2 = Math.sin(rho), cr2 = Math.cos(rho);
+      const w = this._view([(c[0] * cr2 + d[0] * sr2) * k, (c[1] * cr2 + d[1] * sr2) * k, (c[2] * cr2 + d[2] * sr2) * k]);
+      if (w[2] < 0) { const m = Math.hypot(w[0], w[1]) || 1; out.push([w[0] / m * DOT_REF * k, w[1] / m * DOT_REF * k, w[2]]); }
+      else out.push([w[0] * DOT_REF, w[1] * DOT_REF, w[2]]);
+    }
+    return out;
+  }
+  _zc(lon, lat) { return this._view(dvec(lon, lat))[2]; }
+  _poly(P) { beginShape(); for (const q of P) vertex(q[0], q[1]); endShape(CLOSE); }
+  _line(P) { noFill(); beginShape(); for (const q of P) vertex(q[0], q[1]); endShape(); }
+
+  // billboard transform for protruding parts (pods): sits on sphere, tilts with it
+  _billboard(lon, lat, k, restZ, fn) {
+    const bv = dvec(lon, lat), v = this._view(bv); if (v[2] < -0.12) return;
+    const px = v[0] * DOT_REF * k, py = v[1] * DOT_REF * k;
+    const f = Math.max(0.06, Math.min(1, Math.max(0, v[2]) / restZ)), nang = Math.atan2(v[1], v[0]);
+    push(); translate(px, py); rotate(nang); scale(f, 1); rotate(-nang); fn(v, nang, f); pop();
+  }
+
+  // ---------- draw ----------
+  draw(x, y, R, o = {}) {
+    const face = FACE_ALIAS[o.face] || o.face || 'happy', toolId = o.tool || 'light', aim = o.aim || 0;
+    const s = R / DOT_REF, sp = this.speed;
+    push(); translate(x, y + this.bob * R); rotate(this.roll);
+    if (sp > 20) { const st = Math.min(0.12, sp / 2600); rotate(this.velAng); scale(1 + st, 1 - st * 0.7); rotate(-this.velAng); }
+    scale(s);
+    // thruster glow
+    noStroke();
+    for (let i = 0; i < 3; i++) { fill(95, 202, 238, (22 + 55 * this.thrust) / (i + 1)); ellipse(0, DOT_REF * 1.02, DOT_REF * (0.9 - i * 0.2), DOT_REF * (0.22 + 0.4 * this.thrust) * (1 + i * 0.3)); }
+    // idle sonic rings (from the 12-frame idle GIF): two cyan ellipses expand + fade from under the arm pod
+    { const idleK = 1 - this.thrust; if (idleK > 0.05) { noFill(); for (let k = 0; k < 2; k++) { const ph = ((this.t / 1.8) + k * 0.5) % 1, a = Math.sin(ph * Math.PI) * 220 * idleK;
+      stroke(95, 215, 250, a); strokeWeight(9 - 4 * ph); push(); translate(-DOT_REF * (1.15 + 0.12 * ph), DOT_REF * (0.52 + 0.1 * ph)); rotate(-0.2); ellipse(0, 0, 70 + 70 * ph, 190 + 90 * ph); pop(); } noStroke(); } }
+    // outer glow
+    for (let i = 4; i >= 1; i--) { fill(120, 210, 245, 10); circle(0, 0, DOT_REF * 2 + i * 22); }
+    // tool (behind body, outside the rim)
+    this._tool(toolId, aim, o.lightOn !== false);
+    // back fins
+    for (const f of this.fins) this._fin(f, true);
+    // body
+    noStroke(); fill(DOTC.shade); circle(0, 0, DOT_REF * 2);
+    fill(DOTC.hi); circle(-DOT_REF * 0.05, -DOT_REF * 0.06, DOT_REF * 1.86);
+    this._seams();
+    // front fins (swung round in front)
+    for (const f of this.fins) this._fin(f, false);
+    // rim light (left)
+    noFill(); stroke(DOTC.rim); strokeWeight(9); strokeCap(ROUND); arc(0, 0, DOT_REF * 2 - 4, DOT_REF * 2 - 4, Math.PI * 0.62, Math.PI * 1.32);
+    noStroke();
+    // pods + chest + visor (sorted by depth)
+    const items = [
+      { z: this._zc(-80, -2), fn: () => this._pod(-1) }, { z: this._zc(80, -2), fn: () => this._pod(1) },
+      { z: 0.5, fn: () => this._chest() },
+      { z: 1, fn: () => this._visor(face, o) }
+    ].sort((a, b) => a.z - b.z);
+    for (const it of items) it.fn();
+    pop();
+  }
+
+  _seams() { // two meridian seams that rotate with the body
+    stroke(DOTC.hi2); strokeWeight(8); strokeCap(ROUND); noFill();
+    for (const lon of [8, 29]) {
+      let run = [];
+      for (let lat = -78; lat <= 78; lat += 6) {
+        const v = this._view(dvec(lon, lat));
+        if (v[2] > 0.04) run.push([v[0] * DOT_REF, v[1] * DOT_REF]); else { if (run.length > 1) this._line(run); run = []; }
+      }
+      if (run.length > 1) this._line(run);
+    }
+    stroke(DOTC.pale); strokeWeight(5);
+    for (const lon of [18]) {
+      let run = [];
+      for (let lat = -70; lat <= 70; lat += 6) { const v = this._view(dvec(lon, lat)); if (v[2] > 0.04) run.push([v[0] * DOT_REF, v[1] * DOT_REF]); else { if (run.length > 1) this._line(run); run = []; } }
+      if (run.length > 1) this._line(run);
+    }
+    noStroke();
+  }
+
+  _fin(f, backPass) {
+    const b = this._bodyFromRest(f.p), v = this._view(b);
+    const isBack = v[2] < 0.02; if (isBack !== backPass) return;
+    const px = v[0] * DOT_REF * f.k, py = v[1] * DOT_REF * f.k;
+    const restV = f.p, restAng = Math.atan2(restV[1], restV[0]), nowAng = Math.atan2(v[1], v[0]);
+    const swing = this.flutter * D2R * (f.p[1] > 0 ? 1 : -1);
+    push(); translate(px, py); rotate((f.ang * D2R) + (nowAng - restAng) + swing);
+    const depth = Math.max(0.35, Math.abs(v[2]) * 0.4 + 0.6);
+    noStroke(); fill(f.col); ellipse(0, 0, f.w * depth, f.h * 1);
+    pop();
+  }
+
+  _chest() {
+    const lon = -26, lat = -22, v = this._view(dvec(lon, lat)); if (v[2] < 0.15) return;
+    const rot = (pts, cx, cy, a) => pts.map(p => { const x = p[0] - cx, y = p[1] - cy, c = Math.cos(a * D2R), s = Math.sin(a * D2R); return [cx + x * c - y * s, cy + x * s + y * c]; });
+    const pill = (cx, cy, w, h, a, col) => { fill(col); this._poly(this._map(lon, lat, 0, 1.0, rot(dPill(cx, cy, w, h, 10), cx, cy, a))); };
+    noStroke(); pill(-72, 22, 72, 30, 14, DOTC.or1); pill(2, 32, 54, 26, 0, DOTC.or2); pill(58, 26, 30, 20, -18, DOTC.or1);
+    this._billboard(lon, lat + 1.5, 1.0, Math.cos(17 * D2R) * Math.cos(24 * D2R), () => {
+      noStroke(); fill(DOTC.navy); textAlign(CENTER, CENTER); textSize(21); textStyle(BOLD); text('DO-T', 6, -2); textStyle(NORMAL);
+    });
+  }
+
+  _pod(side) {
+    const lon = side * 80, lat = -2, rest = Math.cos(51 * D2R);
+    this._billboard(lon, lat, 1.04, rest, (v, nang, f) => {
+      scale(-side, 1); // art drawn for the left pod
+      const dep = (d) => { translate(0, 0); };
+      noStroke();
+      // wing plate (behind the ring)
+      push(); translate(-150 + this.flutter * 0.6, -62); rotate(-28 * D2R);
+      fill(DOTC.blue); rect(-115, -34, 230, 70, 22); fill(DOTC.white); rect(-104, -26, 208, 54, 17);
+      fill('#B4E0F4'); rect(-86, -14, 120, 11, 5); rect(-86, 4, 86, 11, 5);
+      fill(DOTC.blue); rect(-60, 34, 100, 26, 10); fill(DOTC.white); rect(-52, 38, 78, 14, 6);
+      pop();
+      fill(DOTC.rim); circle(0, 0, 276);
+      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + 0.3; fill(DOTC.navy); circle(Math.cos(a) * 118, Math.sin(a) * 118, 11); }
+      fill(DOTC.blue); circle(-4, 0, 224);
+      fill(DOTC.deep); circle(-30, 4, 172);
+      fill(DOTC.navy); circle(-74, 4, 104); fill(DOTC.blue); circle(-74, 4, 78);
+    });
+  }
+
+  _visor(face, o) {
+    const lon = 0, lat = 8, K = 1;
+    const fill_ = (col, pts, k) => { fill(col); this._poly(this._map(lon, lat, 0, k, pts)); };
+    noStroke();
+    fill_(DOTC.pale, dPill(-16, 20, 470, 206), 1.06);
+    fill_(DOTC.navy, dPill(0, 0, 470, 206), 1.10);
+    fill_(DOTC.blue, dPill(14, 8, 408, 172), 1.115);
+    fill_(DOTC.screen, dPill(16, 14, 386, 154), 1.122);
+    fill_(DOTC.hl, dPill(-168, 60, 16, 11, 8), 1.123); fill_(DOTC.hl, dPill(-104, 60, 84, 11, 8), 1.123);
+    this._face(face, lon, lat, 1.13);
+  }
+
+  _face(face, lon, lat, k) {
+    const cx = 22 + this.gx, cy = 8 + this.gy, E = 97;
+    const mp = (pts) => this._map(lon, lat, 0, k, pts.map(p => [p[0] + cx, p[1] + cy]));
+    const F = (pts) => { noStroke(); fill(DOTC.face); this._poly(mp(pts)); };
+    const L = (pts, w = 11) => { stroke(DOTC.face); strokeWeight(w); strokeCap(ROUND); strokeJoin(ROUND); this._line(mp(pts)); noStroke(); };
+    const blink = this.blinkT > 0 ? 0.12 : 1;
+    const eyeL = [[-122, 8], [-84, 8]];
+    const tiredEye = (sgn) => { const c = dBez([sgn * 84, -30], [sgn * 86, -6], [sgn * 100, 6], [sgn * 124, 6]); L(c, 10); L([[sgn * 126, 20], [sgn * 92, 20]], 10); };
+    switch (face) {
+      case 'neutral': F(dEll(-E, 0, 15, 30 * blink)); F(dEll(E, 0, 15, 30 * blink)); F(dEll(0, 14, 12, 12)); break;
+      case 'strained': L([[-124, -26], [-84, 0], [-124, 26]]); L([[124, -26], [84, 0], [124, 26]]); L(dArc(-21, 24, 21, Math.PI, Math.PI * 2, 10).concat(dArc(21, 24, 21, Math.PI, Math.PI * 2, 10)), 10); break;
+      case 'tired': tiredEye(-1); tiredEye(1); F(dEll(0, 8, 13, 27)); break;
+      case 'sad': tiredEye(-1); tiredEye(1); L(dArc(0, 34, 22, Math.PI, Math.PI * 2, 12), 11); break;
+      case 'heart': F(dHeart(-E, -5, HEART_SIZE)); F(dHeart(E, -5, HEART_SIZE)); L(dArc(0, 2, 27, 0.15, Math.PI - 0.15, 14), 9); break;   // big hearts like the character sheet (half-width = HEART_SIZE)
+      case 'content': L(dArc(-E, -6, 20, 0.1, Math.PI - 0.1, 12), 10); L(dArc(E, -6, 20, 0.1, Math.PI - 0.1, 12), 10); L([[-22, 24], [22, 24]], 10); break;
+      case 'unimpressed': { for (const sg of [-1, 1]) { L([[sg * 134, -8], [sg * 60, -8]], 9); F(dArc(sg * 97, -8, 17, 0, Math.PI, 12)); L([[sg * 60, -36], [sg * 60, -8]], 8); } L([[-28, 22], [28, 22]], 9); break; }
+      case 'defeated': { for (const sg of [-1, 1]) { L([[sg * E - 20, -22], [sg * E + 20, 18]], 11); L([[sg * E - 20, 18], [sg * E + 20, -22]], 11); } F(dEll(0, 8, 13, 26)); break; }
+      case 'joy':
+        L(dArc(-E, 6, 21, Math.PI, Math.PI * 2, 12), 11); L(dArc(E, 6, 21, Math.PI, Math.PI * 2, 12), 11);
+        F(dArc(0, 0, 28, 0, Math.PI, 14).concat([[-28, 0]]).map(p => [p[0], p[1] + 6])); break;
+      default: // happy = hero painting face: tall oval eyes + U smile
+        F(dEll(-E, -2, 18, 38 * blink)); F(dEll(E, -2, 18, 38 * blink)); L(dArc(0, -6, 34, 0.2, Math.PI - 0.2, 16), 7);
+    }
+  }
+
+  // ---------- tools (drawn pointing +x from the socket) ----------
+  _tool(id, aim, lightOn) {
+    push();
+    const dist = DOT_REF * 1.13; translate(Math.cos(aim) * dist, Math.sin(aim) * dist); rotate(aim);
+    if (Math.cos(aim) < 0) scale(1, -1);
+    const pump = Math.sin(this.t * 3) * 3;
+    noStroke();
+    fill(DOTC.blue); circle(0, 0, 150); fill(DOTC.blue2); circle(9, 0, 112);       // socket cap
+    // bell
+    const bell = () => {
+      fill(DOTC.white); beginShape(); for (const q of dBez([22, -58], [60, -118], [120, -140], [182, -140], 14)) vertex(q[0], q[1]);
+      for (const q of dBez([182, 150], [120, 148], [60, 118], [22, 60], 14)) vertex(q[0], q[1]); endShape(CLOSE);
+      fill(DOTC.pale); beginShape(); for (const q of dBez([22, 60], [60, 118], [120, 148], [182, 150], 12)) vertex(q[0], q[1]);
+      for (const q of dBez([182, 40], [130, 70], [70, 62], [22, 30], 12)) vertex(q[0], q[1]); endShape(CLOSE);
+      fill(DOTC.navy); quad(168, -150, 214, -148, 214, 160, 168, 160);
+      fill(DOTC.screen); for (const yy of [-110, -45, 20, 85, 130]) circle(191, yy, 8);
+    };
+    bell();
+    if (id === 'light') {
+      fill(DOTC.blue); ellipse(222, 6, 40, 296);
+      fill(lightOn ? '#FFE9A8' : '#7a8aa6'); ellipse(222, 6, 28, 270);
+      fill(lightOn ? DOTC.amber : '#51607c'); ellipse(222, 6, 20, 120);
+    } else if (id === 'ext') {
+      fill(DOTC.blue); beginShape(); vertex(214, -118); vertex(380, -104 - pump * 0.2); vertex(380, 116 + pump * 0.2); vertex(214, 130); endShape(CLOSE);
+      fill(DOTC.screen); beginShape(); vertex(214, -118); vertex(380, -104); vertex(380, -64); vertex(214, -70); endShape(CLOSE);
+      fill('#3FA4DE'); beginShape(); vertex(214, -50); vertex(380, -44); vertex(380, 20); vertex(214, 10); endShape(CLOSE);
+      fill(DOTC.deep); ellipse(382, 6, 36, 222); fill('#0E4F86'); ellipse(384, 6, 22, 190);
+      push(); translate(70, 110); rotate(-12 * D2R); fill('#B41F45'); rect(-50, -10, 96, 150, 18); fill('#F0485F'); rect(-34, 8, 12, 80, 6); fill(DOTC.screen); rect(-50, 124, 96, 22, 8); pop();
+    } else if (id === 'flame') {
+      push(); translate(52, 104); rotate(-18 * D2R); fill('#EC8780'); rect(-52, -10, 104, 160, 20); fill('#F4968A'); rect(-44, -4, 70, 140, 16); fill('#FFC6A6'); rect(-24, 16, 12, 70, 6); fill('#F2A090'); rect(-52, 134, 104, 20, 8); pop();
+      fill(DOTC.navy); rect(214, -26, 52, 52); fill(DOTC.blue); rect(262, -14, 36, 28);
+      fill(DOTC.screen); beginShape(); vertex(298, -34); vertex(430, -76); vertex(430, 82); vertex(298, 40); endShape(CLOSE);
+      fill(DOTC.face); for (const [px, py, r] of [[330, -30, 16], [384, -48, 18], [364, 6, 20], [326, 26, 12], [398, 40, 17], [352, -64, 10], [336, -6, 10]]) ellipse(px, py, r * 1.4, r);
+      fill(DOTC.deep); ellipse(432, 3, 28, 160);
+      stroke('#5FA9E0'); strokeWeight(7); noFill(); line(240, 70, 310, 126); line(310, 126, 430, 110); noStroke();
+      fill(DOTC.blue); rect(430, 96, 36, 28, 8);
+      const fl = Math.sin(this.t * 14) * 4; fill('#FF7A24'); ellipse(488, 100, 36 + fl, 52); fill('#FFD04A'); ellipse(488, 104, 20, 32);
+    } else if (id === 'fist') {
+      fill(DOTC.navy); rect(214, -30, 56, 60, 8);   // wrist mount only: the full-size Rocket Fist is drawn by drawHolsterFist() in the world layer
+    } else if (id === 'shield') {
+      fill(DOTC.navy); rect(214, -26, 44, 52, 8);
+      fill(DOTC.screen); beginShape(); for (const q of dBez([250, -190], [380, -150], [380, 150], [250, 190], 16)) vertex(q[0], q[1]); for (const q of dBez([286, 120], [336, 70], [336, -70], [286, -120], 12)) vertex(q[0], q[1]); endShape(CLOSE);
+      fill(DOTC.hl); beginShape(); for (const q of dBez([262, -150], [330, -110], [330, -40], [300, -20], 10)) vertex(q[0], q[1]); for (const q of dBez([284, -30], [300, -70], [296, -110], [262, -130], 10)) vertex(q[0], q[1]); endShape(CLOSE);
+    } else { // empty socket stub
+      fill(DOTC.pale); rect(210, -20, 124, 44, 12); fill(DOTC.white); rect(210, -22, 124, 36, 12);
+    }
+    pop();
+  }
+}
+
+function dvec(lon, lat) { const a = lon * D2R, b = lat * D2R; return [Math.cos(b) * Math.sin(a), -Math.sin(b), Math.cos(b) * Math.cos(a)]; }
+
+
+
+// ============================================================
+// AHAD FEEL kit v1.0.0  --  screen feel for p5.js 2.3.4 games in the ALL HUMANS ARE DEAD style
+// Lifted from DO-T RUSH 0.1.46 (src/feel.js), which ported the glitch from AHAD Prototype 11 (v9_feel.js).
+//   glitch       RGB split + tear bands (AhadFeel.glitch(0..1)); random glitching at low power
+//   impact       one inverted black-and-white frame, then the colour bleeds back; never strobes (gap)
+//   shake        screen shake (AhadFeel.shake(px)); call AhadFeel.applyShake() at the top of your world draw
+//   freeze       hit-stop: AhadFeel.freeze(secs); skip your game update while AhadFeel.frozen()
+//   hitstun      AhadFeel.stun(enemy, secs); AhadFeel.tickStun(enemy, dt) each frame (true = still stunned);
+//                AhadFeel.vib(enemy) -> {x, y} offset to draw it shaking
+//   combo        streaks with tiers, bonus callbacks, a DOT-UI counter (needs dot-ui.js for txt/glow/thinBar)
+//   greatJob     the GREAT JOB! victory card (tilted chunky white letters, electric-blue glow)
+// Needs: p5 2.x. The combo counter and great-job card also need dot-ui.js (txt, glow, noGlow, thinBar, TR).
+// Every loop is braced (p5 web editor loop-protect safe). No globals except AhadFeel.
+// ============================================================
+const AhadFeel = (() => {
+  const CFG = {
+    glitch: true, glitchDecay: 3.0, rgbSplit: 10, tearSlices: 8,
+    lowPwrAt: 0.15, lowPwrRate: [0.7, 6], lowPwrStrength: [0.14, 0.7],   // below 15% power: random glitching, worse toward 0
+    impact: true, impactGap: 0.7, impactBleed: 0.35,
+    shakeDecay: 30,                                  // pixels of shake lost per second
+    combo: {
+      window: 2.2,
+      tiers: [[3, 'NICE'], [6, 'GREAT'], [10, 'AWESOME'], [15, 'FANTASTIC'], [22, 'UNSTOPPABLE'], [30, 'DO-T-TASTIC']],
+      colors: ['#19E3FF', '#3CFFB0', '#FFB938', '#FF3FD0', '#FF4D5E', '#FFFFFF'],
+      bonusEvery: 5,                                 // onBonus(extra) every this many in a row
+    },
+    greatJobSeconds: 2.8,
+  };
+  let glitchAmt = 0, bufs = null, impactT = -99, impactNow = 0, lastImpact = -99, shakeAmt = 0, freezeT = 0, gj = null;
+  const combo = { n: 0, t: 0, tier: -1, popT: 0, tierT: 0, word: '', col: CFG.combo.colors[0], best: 0, bonus: 0 };
+  const hooks = { onTier: null, onBonus: null, onEnd: null, onStep: null };   // set these to add sounds, PWR, bytes, toasts
+  const now = () => millis() / 1000;
+  const lerpN = (a, b, t) => a + (b - a) * t;
+  const seeded = (seed) => { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; };
+
+  function config(opts) { Object.assign(CFG, opts || {}); if (opts && opts.combo) CFG.combo = Object.assign({}, CFG.combo, opts.combo); return CFG; }
+
+  // ---- events ----
+  function glitch(a) { if (CFG.glitch) glitchAmt = Math.min(1, Math.max(glitchAmt, a)); }
+  function impactFrame() { const t = now(); if (!CFG.impact || t - lastImpact < CFG.impactGap) return false; lastImpact = t; impactT = t; impactNow = 2; return true; }
+  function shake(px) { shakeAmt = Math.max(shakeAmt, px); }
+  function freeze(secs) { freezeT = Math.max(freezeT, secs); }
+  function frozen() { return freezeT > 0; }
+  function stun(e, secs) { e.stunT = Math.max(e.stunT || 0, secs); e.vibT = secs; e.vibMax = secs; }
+  function tickStun(e, dt) { e.vibT = Math.max(0, (e.vibT || 0) - dt); e.stunT = Math.max(0, (e.stunT || 0) - dt); return e.stunT > 0; }   // call per enemy per frame; true = still stunned
+  function vib(e) { if (!(e.vibT > 0)) return { x: 0, y: 0 }; const v = 4 * e.vibT / (e.vibMax || 0.18); return { x: random(-v, v), y: random(-v, v) }; }
+
+  // call once per frame (dt in seconds). power01 = 0..1 to drive low-power glitching (optional)
+  function update(dt, power01) {
+    glitchAmt = Math.max(0, glitchAmt - CFG.glitchDecay * dt);
+    shakeAmt = Math.max(0, shakeAmt - CFG.shakeDecay * dt);
+    freezeT = Math.max(0, freezeT - dt);
+    if (power01 !== undefined && power01 < CFG.lowPwrAt) {
+      const k = 1 - power01 / CFG.lowPwrAt;
+      if (Math.random() < lerpN(CFG.lowPwrRate[0], CFG.lowPwrRate[1], k) * dt) glitch(lerpN(CFG.lowPwrStrength[0], CFG.lowPwrStrength[1], k));
+    }
+    combo.popT = Math.max(0, combo.popT - dt); combo.tierT = Math.max(0, combo.tierT - dt);
+    if (combo.t > 0) { combo.t -= dt; if (combo.t <= 0) { if (hooks.onEnd && combo.n >= CFG.combo.tiers[0][0]) hooks.onEnd(combo.n, combo.bonus, combo.col); const best = combo.best; Object.assign(combo, { n: 0, t: 0, tier: -1, word: '', bonus: 0, col: CFG.combo.colors[0], best }); } }
+  }
+  // the shake: call right after push() at the start of your world drawing
+  function applyShake() { if (shakeAmt > 0) translate(random(-shakeAmt, shakeAmt), random(-shakeAmt, shakeAmt)); }
+
+  // ---- combos ----
+  function comboAdd(x, y) {
+    const C = CFG.combo;
+    combo.n = combo.t > 0 ? combo.n + 1 : 1; combo.t = C.window; combo.popT = 0.25; combo.best = Math.max(combo.best, combo.n);
+    if (hooks.onStep) hooks.onStep(combo.n, x, y);
+    const extra = Math.floor(combo.n / C.bonusEvery);
+    if (extra > 0 && combo.n >= 2 && hooks.onBonus) { combo.bonus += extra; hooks.onBonus(extra, x, y); }
+    let tier = -1; C.tiers.forEach(([need], i) => { if (combo.n >= need) tier = i; });
+    if (tier > combo.tier) {
+      combo.tier = tier; combo.word = C.tiers[tier][1]; combo.col = C.colors[Math.min(tier, C.colors.length - 1)]; combo.tierT = 0.6;
+      shake(3 + tier * 1.5); freeze(0.05); glitch(0.1 + tier * 0.04);
+      if (hooks.onTier) hooks.onTier(tier, combo.word, combo.n, combo.col);
+      return true;
+    }
+    return false;
+  }
+  // the counter: big thin "x12" in the tier colour, the word under it, a draining timer bar, speed lines on tier-up
+  function drawCombo(x, y) {
+    if (combo.n < 2 || combo.t <= 0) return;
+    push();
+    const s = 1 + combo.popT * 1.2 + combo.tierT * 0.6;
+    if (combo.tierT > 0) {
+      const a = combo.tierT / 0.6, c = color(combo.col); c.setAlpha(140 * a); stroke(c); strokeWeight(2);
+      for (let i = 0; i < 26; i++) { const an = i / 26 * TWO_PI, r0 = Math.max(width, height) * (0.45 + 0.1 * Math.sin(i * 7)), r1 = r0 - 60 - 80 * a; line(width / 2 + Math.cos(an) * r0, height / 2 + Math.sin(an) * r0, width / 2 + Math.cos(an) * r1, height / 2 + Math.sin(an) * r1); }
+      noStroke();
+    }
+    translate(x, y); scale(s);
+    glow(combo.col, 10 + combo.tierT * 20); txt('x' + combo.n, 0, 0, 34, combo.col, CENTER, 200, 2); noGlow();
+    if (combo.word) txt(combo.word, 0, 24, 9, combo.col, CENTER, 400, 4);
+    thinBar(-36, 34, 72, combo.t / CFG.combo.window, combo.col);
+    pop();
+  }
+
+  // ---- GREAT JOB! ----
+  function greatJob() { gj = { t: 0 }; }
+  function drawGreatJob(cx, cy) {
+    if (!gj) return;
+    gj.t += deltaTime / 1000;
+    const t = gj.t, life = CFG.greatJobSeconds; if (t > life) { gj = null; return; }
+    const popK = t < 0.25 ? 0.4 + 0.6 * (t / 0.25) * (1 + 0.25 * Math.sin(t / 0.25 * PI)) : 1, fade = Math.min(1, (life - t) / 0.4);
+    push(); translate(cx === undefined ? width / 2 : cx, cy === undefined ? height * 0.46 : cy); rotate(-0.27); scale(popK);
+    drawingContext.globalAlpha = fade;
+    textFont('"Arial Rounded MT Bold", "Arial Black", "Helvetica Neue", sans-serif'); try { textWeight(800); } catch (_) { textStyle(BOLD); } textAlign(CENTER, CENTER); noStroke();   // p5 2.3.4: textStyle(BOLD) after textWeight() freezes textSize, so use textWeight
+    const pulse = 0.8 + 0.2 * Math.sin(t * 8);
+    for (const [blur, col] of [[40, 'rgba(40,110,255,0.9)'], [20, 'rgba(90,170,255,0.9)'], [8, 'rgba(190,230,255,1)']]) {
+      drawingContext.shadowColor = col; drawingContext.shadowBlur = blur * pulse; fill(235, 248, 255);
+      textSize(64); text('GREAT', 0, -34); text('JOB!', 10, 30);
+    }
+    drawingContext.shadowBlur = 0; fill(255); textSize(64); text('GREAT', 0, -34); text('JOB!', 10, 30);
+    pop();
+  }
+
+  // ---- after everything is drawn (before the DOT-UI scanlines): impact frame, then glitch ----
+  function applyPostFx() {
+    const cv = drawingContext.canvas, ctx = drawingContext, w = cv.width, h = cv.height, since = now() - impactT;
+    if (impactNow > 0 || (CFG.impact && since < CFG.impactBleed)) {
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (impactNow > 0) {
+        if (impactNow === 2) { ctx.globalCompositeOperation = 'difference'; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+        ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = impactNow === 2 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.08)'; ctx.fillRect(0, 0, w, h);
+        impactNow--;
+      } else { ctx.globalAlpha = 1 - since / CFG.impactBleed; ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, w, h); }
+      ctx.restore();
+    }
+    if (!CFG.glitch || glitchAmt < 0.03) return;
+    if (!bufs) bufs = [document.createElement('canvas'), document.createElement('canvas'), document.createElement('canvas')];
+    for (const b of bufs) { if (b.width !== w || b.height !== h) { b.width = w; b.height = h; } }
+    const [buf, red, cyan] = bufs, g = glitchAmt, k = w / width;
+    const bc = buf.getContext('2d'); bc.globalCompositeOperation = 'source-over'; bc.globalAlpha = 1; bc.drawImage(cv, 0, 0);
+    const rc = red.getContext('2d'); rc.globalCompositeOperation = 'source-over'; rc.drawImage(buf, 0, 0); rc.globalCompositeOperation = 'multiply'; rc.fillStyle = 'rgb(255,0,40)'; rc.fillRect(0, 0, w, h);
+    const cc = cyan.getContext('2d'); cc.globalCompositeOperation = 'source-over'; cc.drawImage(buf, 0, 0); cc.globalCompositeOperation = 'multiply'; cc.fillStyle = 'rgb(0,255,255)'; cc.fillRect(0, 0, w, h);
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+    const split = CFG.rgbSplit * g * k;
+    ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(red, split, 0); ctx.drawImage(cyan, -split, 0);
+    const rnd = seeded(Math.floor(millis() / 50) * 977 + 13), n = Math.ceil(CFG.tearSlices * g);
+    for (let i = 0; i < n; i++) {
+      const y = rnd() * h, sh = (5 + rnd() * 46 * g) * k, ox = (rnd() - 0.5) * 2 * 70 * g * k;
+      ctx.globalCompositeOperation = rnd() < 0.3 ? 'lighter' : 'source-over';
+      ctx.drawImage(rnd() < 0.3 ? cyan : buf, 0, y, w, sh, ox, y, w, sh);
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 2; i++) { ctx.fillStyle = `rgba(110,255,255,${0.1 * g})`; ctx.fillRect(0, rnd() * h, w, (2 + rnd() * 3) * k); }
+    if (g > 0.55) { ctx.fillStyle = `rgba(255,255,255,${0.07 * g})`; ctx.fillRect(0, 0, w, h); }
+    ctx.restore();
+  }
+
+  return {
+    CFG, config, hooks, combo,
+    glitch, impactFrame, shake, freeze, frozen, stun, tickStun, vib, update, applyShake,
+    comboAdd, drawCombo, greatJob, drawGreatJob, applyPostFx,
+    get glitchAmount() { return glitchAmt; }, set glitchAmount(v) { glitchAmt = v; },
+    VERSION: '1.0.0',
+  };
+})();
+
+
+// ============================================================================
+// ALEF-BET RULES  --  the game.  Needs settings (above), then dot-ui.js, dot-rig.js, ahad-feel.js.
+// Rules!-style: each level adds one rule; clear the newest rule's tiles first, then the rule before it, down to rule 1.
+// ============================================================================
+
+// ---------- the 22 letters: glyph, name, value (standard Hebrew number values) ----------
+const LETTERS = [
+  ['א', 'ALEF', 1], ['ב', 'BET', 2], ['ג', 'GIMEL', 3], ['ד', 'DALET', 4], ['ה', 'HE', 5], ['ו', 'VAV', 6],
+  ['ז', 'ZAYIN', 7], ['ח', 'CHET', 8], ['ט', 'TET', 9], ['י', 'YOD', 10], ['כ', 'KAF', 20], ['ל', 'LAMED', 30],
+  ['מ', 'MEM', 40], ['נ', 'NUN', 50], ['ס', 'SAMEKH', 60], ['ע', 'AYIN', 70], ['פ', 'PE', 80], ['צ', 'TSADI', 90],
+  ['ק', 'QOF', 100], ['ר', 'RESH', 200], ['ש', 'SHIN', 300], ['ת', 'TAV', 400]
+];
+const FINAL_FORMS = { KAF: 'ך', MEM: 'ם', NUN: 'ן', PE: 'ף', TSADI: 'ץ' };   // the five letters with a final form
+// sounds in modern Hebrew (what children hear today). Two sounds = with and without the dot (dagesh), or Shin / Sin
+const LETTER_SOUNDS = { ALEF: [], BET: ['b', 'v'], GIMEL: ['g'], DALET: ['d'], HE: ['h'], VAV: ['v'], ZAYIN: ['z'], CHET: ['ch'], TET: ['t'], YOD: ['y'],
+  KAF: ['k', 'kh'], LAMED: ['l'], MEM: ['m'], NUN: ['n'], SAMEKH: ['s'], AYIN: [], PE: ['p', 'f'], TSADI: ['ts'], QOF: ['k'], RESH: ['r'], SHIN: ['sh', 's'], TAV: ['t'] };
+const SOUND_TEXT = { ALEF: 'Silent. It carries a vowel sound.', BET: 'B with a dot inside, V without it.', GIMEL: 'G, as in go.', DALET: 'D', HE: 'H', VAV: 'V',
+  ZAYIN: 'Z', CHET: 'CH, as in Bach.', TET: 'T', YOD: 'Y', KAF: 'K with a dot inside, KH without it.', LAMED: 'L', MEM: 'M', NUN: 'N', SAMEKH: 'S',
+  AYIN: 'Silent today. It carries a vowel sound.', PE: 'P with a dot inside, F without it.', TSADI: 'TS', QOF: 'K (written Q)', RESH: 'R',
+  SHIN: 'SH with a dot on the right, S with a dot on the left.', TAV: 'T' };
+const LETTER_INFO = {};
+LETTERS.forEach((L, i) => { LETTER_INFO[L[1]] = { i, glyph: L[0], name: L[1], value: L[2], sounds: LETTER_SOUNDS[L[1]], soundText: SOUND_TEXT[L[1]], final: FINAL_FORMS[L[1]] || '', psalm: PSALM119[i] }; });
+const soundLabel = (name) => { const s = LETTER_SOUNDS[name]; return s.length ? s.join(' / ').toUpperCase() : 'SILENT'; };
+// "Did you know?" lines. Ones that need Scripture only show when src-data/extract.py verified them (VERIFIED flags).
+const FACTS = [
+  ['Hebrew is written and read from right to left.', true],
+  ['The Alef-Bet has 22 letters. They are all consonants; vowels are small dots and dashes added around them.', true],
+  ['Five letters change shape at the end of a word: KAF, MEM, NUN, PE and TSADI. These are the final forms.', true],
+  ['Every letter is also a number. ALEF is 1, YOD is 10, QOF is 100 and TAV is 400.', true],
+  ['Psalm 119 has 22 parts, one for each letter, with 8 verses in each part: 176 verses.', VERIFIED.ps119Ok && VERIFIED.ps119Verses === 176],
+  ['In the Hebrew of Psalm 119, all 8 verses of each part begin with that part\'s letter.', VERIFIED.ps119Ok],
+  ['Your KJV prints the letter names in Psalm 119: ALEPH, BETH, GIMEL and on to TAU.', VERIFIED.ps119Ok],
+  ['Proverbs 31:10-31 is an Alef-Bet poem: 22 verses, ALEF to TAV in order.', VERIFIED.prov31],
+  ['Lamentations 1 has 22 verses, one for each letter in order.', VERIFIED.lam1],
+  ['Lamentations 3 has 66 verses: three verses for each letter.', VERIFIED.lam3],
+  ['In Lamentations 2, 3 and 4, PE comes before AYIN.', VERIFIED.lam24PeAyin && VERIFIED.lam3],
+  ['Psalm 145 is an Alef-Bet psalm, but in the Hebrew text there is no verse for NUN.', VERIFIED.ps145NoNun],
+  ['ALEF and AYIN are silent letters today. Each one carries a vowel sound.', true],
+  ['BET, KAF and PE have two sounds: with a dot inside they say B, K, P; without it V, KH, F.', true]
+].filter((f) => f[1]).map((f) => f[0]);
+const MET = {};                                 // letters the player has tapped correctly (their Letter Book)
+let bookIdx = 0, bookBack = 'title', cardBack = 'book';
+const TOTAL_LEVELS = RULE_BATCHES.reduce((s, b) => s + b.rules.length, 0);
+const SAVE_KEY = 'alefbet_rules_v1';
+
+let cnv = null, scene = 'title', sceneT = 0, howtoBack = 'title', paused = false, debugMode = 'timeless';
+let G = null;                                   // the current run
+let parts = [];                                 // little squares that fly off a cleared tile
+let dotRig = null, titleRig = null;
+const OPT = { sound: AUDIO_ON, values: DISPLAY_SHOW_VALUES, names: DISPLAY_SHOW_NAMES, glitch: DISPLAY_SCREEN_GLITCH };
+const DBG = { ruleText: DEBUG_ON && DEBUG_SHOW_RULE_TEXT, infinite: DEBUG_ON && DEBUG_INFINITE_TIME, hitboxes: DEBUG_ON && DEBUG_SHOW_HITBOXES };
+const BEST = { timeless: 0, challenge: 0, score: 0 };
+
+// ---------- small helpers ----------
+const pad2 = (n) => String(n).padStart(2, '0');
+const randInt = (n) => Math.floor(Math.random() * n);
+function shuffleArr(a) { for (let i = a.length - 1; i > 0; i--) { const j = randInt(i + 1), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function colKey(name) { const c = TILE_COLORS.find((q) => q[0] === name); return c ? TR[c[1]] : TR.cy; }
+function findLetter(name) { return LETTERS.find((L) => L[1] === name); }
+function groupOf(v) { return v < 10 ? 'ones' : v < 100 ? 'tens' : 'hundreds'; }
+function hebTxt(s, x, y, size, col) { textFont(DISPLAY_HEBREW_FONT); textSize(size); try { textWeight(400); } catch (_) {} lspace(0); fill(col); noStroke(); textAlign(CENTER, CENTER); text(s, x, y); }
+function goScene(s) { scene = s; sceneT = 0; }
+function saveAll() { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ best: BEST, opt: OPT, met: MET })); } catch (_) {} }
+function loadAll() { try { const o = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); if (o && o.best) { Object.assign(BEST, o.best); } if (o && o.opt) { Object.assign(OPT, o.opt); } if (o && o.met) { Object.assign(MET, o.met); } } catch (_) {} }
+
+// ---------- rules ----------
+function ruleMatch(r, t) {
+  switch (r.type) {
+    case 'seq': return true;
+    case 'color': return t.color === r.color;
+    case 'final': return !!FINAL_FORMS[t.name];
+    case 'group': return groupOf(t.value) === r.group;
+    case 'letter': return t.name === r.letter;
+    case 'min': return t.value >= r.min;
+    case 'sound': return LETTER_SOUNDS[t.name].includes(r.sound);
+    case 'silent': return LETTER_SOUNDS[t.name].length === 0;
+    case 'two': return LETTER_SOUNDS[t.name].length >= 2;
+    case 'and': return r.parts.every((p) => ruleMatch(p, t));
+    default: return false;
+  }
+}
+function ruleSay(r) { return r.say || (r.verse ? 'Tap the letter that begins Psalm 119:' + r.verse + ' in Hebrew.' : ''); }
+function verseOf(r) { if (r.type !== 'letter' || !r.verse) { return null; } const P = LETTER_INFO[r.letter].psalm; return P.from === r.verse ? P : null; }   // only the first verse of a part is in the data
+function batchOf() { return RULE_BATCHES[G.info.batch]; }
+function ruleColor(r) { if (r.type === 'color') { return r.color; } if (r.type === 'and') { const p = r.parts.find((q) => q.type === 'color'); return p ? p.color : null; } return null; }
+function levelInfo(level) {
+  let l = Math.max(1, Math.min(TOTAL_LEVELS, level));
+  for (let b = 0; b < RULE_BATCHES.length; b++) { const n = RULE_BATCHES[b].rules.length; if (l <= n) { return { batch: b, n: l, rules: RULE_BATCHES[b].rules.slice(0, l) }; } l -= n; }
+  return { batch: 0, n: 1, rules: RULE_BATCHES[0].rules.slice(0, 1) };
+}
+
+// ---------- the board: random tiles, then keep the fairest of many tries ----------
+function needLetters(r, out) { if (r.type === 'letter') { out.push(r.letter); } if (r.type === 'and') { for (const p of r.parts) { needLetters(p, out); } } }
+function randomBoard(rules) {
+  const total = BOARD_COLS * BOARD_ROWS, counts = {}, picks = [], need = [];
+  for (const r of rules) { needLetters(r, need); }
+  for (const nm of need) { if (picks.length < total && Math.random() < 0.85) { picks.push(findLetter(nm)); counts[nm] = (counts[nm] || 0) + 1; } }
+  let guard = 0;
+  while (picks.length < total && guard < 2000) {
+    guard++; const L = LETTERS[randInt(LETTERS.length)];
+    if ((counts[L[1]] || 0) >= BOARD_MAX_COPIES) { continue; }
+    counts[L[1]] = (counts[L[1]] || 0) + 1; picks.push(L);
+  }
+  shuffleArr(picks);
+  return picks.map((L, i) => ({ glyph: L[0], name: L[1], value: L[2], color: TILE_COLORS[randInt(TILE_COLORS.length)][0], i, col: i % BOARD_COLS, row: Math.floor(i / BOARD_COLS), alive: true, pop: 0, dieT: -1, shakeT: 0 }));
+}
+function scoreBoard(tiles, rules) {      // higher = fairer: every rule above 1 has something to tap, and rule 1 still has tiles left
+  let rest = tiles.slice(), s = 0, perfect = true;
+  for (let k = rules.length - 1; k >= 1; k--) {
+    const m = rest.filter((t) => ruleMatch(rules[k], t));
+    if (m.length > 0) { s += 1000 - Math.abs(m.length - 2) * 15; } else { perfect = false; }
+    rest = rest.filter((t) => !ruleMatch(rules[k], t));
+  }
+  if (rest.length >= BOARD_MIN_FOR_RULE1) { s += 1000; } else { perfect = false; s -= 300; }
+  return { s, perfect };
+}
+function makeBoard(rules) {
+  let best = null, bestS = -1e9, perfect = false;
+  for (let a = 0; a < BOARD_TRIES; a++) {
+    const tiles = randomBoard(rules), sc = scoreBoard(tiles, rules);
+    if (sc.s > bestS) { best = tiles; bestS = sc.s; perfect = sc.perfect; }
+    if (sc.perfect && a > 20) { break; }
+  }
+  // repair pass: recolor one tile at a time, keeping any change that does not make the board less fair
+  for (let a = 0; a < BOARD_TRIES && !perfect; a++) {
+    const t = best[randInt(best.length)], old = t.color;
+    t.color = TILE_COLORS[randInt(TILE_COLORS.length)][0];
+    const sc = scoreBoard(best, rules);
+    if (sc.s >= bestS) { bestS = sc.s; perfect = sc.perfect; } else { t.color = old; }
+  }
+  return best;
+}
+function boardX0() { return (width - (BOARD_COLS * BOARD_TILE_SIZE + (BOARD_COLS - 1) * BOARD_TILE_GAP)) / 2; }
+function tileCenter(t) { return { x: boardX0() + t.col * (BOARD_TILE_SIZE + BOARD_TILE_GAP) + BOARD_TILE_SIZE / 2, y: BOARD_TOP + t.row * (BOARD_TILE_SIZE + BOARD_TILE_GAP) + BOARD_TILE_SIZE / 2 }; }
+function tileAt(x, y) { const h = CONTROLS_TILE_HITBOX / 2; return G.tiles.find((t) => { if (!t.alive) { return false; } const c = tileCenter(t); return Math.abs(x - c.x) <= h && Math.abs(y - c.y) <= h; }) || null; }
+function aliveTiles() { return G.tiles.filter((t) => t.alive); }
+
+// ---------- sound: tiny synthesized blips (WebAudio), started on the first tap ----------
+const SND = { ctx: null, out: null };
+function sndInit() {
+  if (SND.ctx) { if (SND.ctx.state !== 'running') { try { SND.ctx.resume(); } catch (_) {} } return; }
+  try { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) { return; } SND.ctx = new AC(); SND.out = SND.ctx.createGain(); SND.out.gain.value = AUDIO_VOLUME; SND.out.connect(SND.ctx.destination); } catch (_) {}
+}
+function tone(f, dur, vol, type, delay, f2) {
+  if (!OPT.sound || !SND.ctx || SND.ctx.state !== 'running') { return; }
+  const c = SND.ctx, t0 = c.currentTime + (delay || 0), o = c.createOscillator(), g = c.createGain();
+  o.type = type || 'triangle'; o.frequency.setValueAtTime(f, t0); if (f2) { o.frequency.exponentialRampToValueAtTime(f2, t0 + dur); }
+  g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol || 0.2, t0 + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(SND.out); o.start(t0); o.stop(t0 + dur + 0.05);
+}
+const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+const SFX = {
+  ui() { tone(1300, 0.05, 0.12, 'sine', 0, 1750); },
+  good(k) { const m = 79 + [0, 2, 4, 7, 9, 12, 14, 16][Math.min(7, Math.max(0, k - 1))]; tone(hz(m), 0.12, 0.16, 'triangle'); tone(hz(m + 12), 0.08, 0.05, 'sine'); },
+  wrong() { tone(220, 0.22, 0.13, 'sawtooth', 0, 95); },
+  phase() { tone(hz(81), 0.09, 0.15, 'triangle'); tone(hz(88), 0.16, 0.15, 'triangle', 0.07); },
+  clear() { [69, 73, 76, 81].forEach((m, i) => tone(hz(m), 0.45, 0.14, 'triangle', i * 0.1)); },
+  jingle() { [[81, 0, 0.26], [83, 0.14, 0.26], [81, 0.28, 0.26], [86, 0.44, 1.3]].forEach((n) => tone(hz(n[0]), n[2], 0.17, 'triangle', n[1])); },   // the AHAD jingle: A - B - A - D
+  big() { [69, 73, 76, 81, 85, 88].forEach((m, i) => tone(hz(m), 0.6, 0.13, 'triangle', i * 0.09)); [57, 64, 69, 73].forEach((m) => tone(hz(m), 1.8, 0.07, 'sine', 0.6)); },
+  fail() { tone(230, 0.9, 0.15, 'sawtooth', 0, 45); }
+};
+
+// ---------- a run ----------
+function newGame(mode, level) {
+  G = { mode, level: 1, score: 0, time: PLAYER_START_TIME, mistakes: 0, levelMist: 0, phaseMist: 0, phase: 0, rules: [], info: null, tiles: [],
+    hintT: 0, hints: 0, face: 'happy', faceT: 0, flashT: 0, clearT: -1, cleared: 0, newLetters: [] };
+  paused = false; AhadFeel.combo.best = 0; startLevel(level || 1);
+}
+function startLevel(level) {
+  G.level = level; G.info = levelInfo(level); G.rules = G.info.rules; G.tiles = makeBoard(G.rules);
+  G.levelMist = 0; G.phaseMist = 0; G.hintT = 0; G.clearT = -1; G.newLetters = []; G.fact = FACTS[(level - 1) % FACTS.length]; G.phase = G.rules.length - 1; parts = [];
+  goScene('announce');
+}
+function beginPlay() {
+  if (scene !== 'announce') { return; }
+  goScene('play'); paused = false;
+  for (const t of G.tiles) { t.pop = -t.i * BOARD_POP_DELAY * 4; }
+  enterPhase(G.rules.length - 1, true); SFX.jingle(); setFace('happy', 0);
+}
+function phaseHas(k) { const r = G.rules[k], a = aliveTiles(); if (r.type === 'seq') { return a.length > 0; } return a.some((t) => ruleMatch(r, t)); }
+function enterPhase(k, first) {               // skips any rule with nothing left to tap (like Rules!)
+  while (k > 0 && !phaseHas(k)) { k--; }
+  G.phase = k; G.phaseMist = 0; G.hintT = 0; G.flashT = first ? 0 : 0.7;
+}
+function validTiles() {
+  const a = aliveTiles(), r = G.rules[G.phase]; if (!r || !a.length) { return []; }
+  if (r.type === 'seq') { const vals = a.map((t) => t.value), target = r.dir === 'low' ? Math.min(...vals) : Math.max(...vals); return a.filter((t) => t.value === target); }
+  return a.filter((t) => ruleMatch(r, t));
+}
+function setFace(f, secs) { G.face = f; G.faceT = secs; }
+function showHint(manual) { G.hintT = PLAYER_HINT_SECONDS; if (manual) { G.hints++; } setFace('content', 1.2); }
+function tapTile(t) {
+  if (G.clearT >= 0 || paused || scene !== 'play') { return; }
+  const c = tileCenter(t);
+  if (validTiles().includes(t)) {
+    t.alive = false; t.dieT = 0; G.score += PLAYER_POINTS_CORRECT;
+    if (!MET[t.name]) { MET[t.name] = true; G.newLetters.push(t.name); saveAll(); }
+    if (G.mode === 'challenge') { G.time = Math.min(PLAYER_TIME_MAX, G.time + PLAYER_TIME_PER_CORRECT); }
+    burst(c.x, c.y, colKey(t.color)); AhadFeel.comboAdd(c.x, c.y);
+    const r = G.rules[G.phase];
+    if (aliveTiles().length === 0) { boardCleared(); }
+    else if (r.type !== 'seq' && !phaseHas(G.phase)) { enterPhase(G.phase - 1, false); SFX.phase(); }
+  } else {
+    t.shakeT = 0.35; G.mistakes++; G.levelMist++; G.phaseMist++; setFace('sad', 0.9); SFX.wrong();
+    AhadFeel.shake(4); if (OPT.glitch) { AhadFeel.glitch(0.25); }
+    if (AhadFeel.combo.t > 0) { AhadFeel.combo.t = 0.0001; }       // a wrong tap ends the streak
+    if (G.mode === 'challenge' && !DBG.infinite) { G.time -= PLAYER_TIME_PENALTY; }
+    if (G.mode === 'timeless' && G.phaseMist >= PLAYER_HINT_AFTER && G.hintT <= 0) { showHint(false); }
+  }
+}
+function boardCleared() {
+  G.clearT = 0; G.cleared++; G.score += PLAYER_POINTS_CLEAR; setFace('heart', 3); G.hintT = 0;
+  const batchEnd = G.info.n === RULE_BATCHES[G.info.batch].rules.length;
+  if (batchEnd) { AhadFeel.greatJob(); SFX.big(); } else { SFX.clear(); }
+  recordBest(G.level);
+}
+function recordBest(levelDone) { BEST[G.mode] = Math.max(BEST[G.mode] || 0, levelDone); BEST.score = Math.max(BEST.score || 0, G.score); saveAll(); }
+function nextLevel() { if (G.level >= TOTAL_LEVELS) { goScene('win'); } else { startLevel(G.level + 1); } }
+function gameOver() { G.time = 0; recordBest(G.level - 1); SFX.fail(); goScene('over'); }
+function updatePlay(dt) {
+  if (G.faceT > 0) { G.faceT -= dt; }
+  if (G.hintT > 0) { G.hintT -= dt; }
+  if (G.flashT > 0) { G.flashT -= dt; }
+  if (G.clearT >= 0) { G.clearT += dt; if (G.clearT > 0.8) { goScene('clear'); } return; }
+  if (G.mode === 'challenge' && !DBG.infinite) { G.time -= dt; if (G.time <= 0) { gameOver(); } }
+}
+
+// ---------- particles ----------
+function burst(x, y, col) { for (let i = 0; i < 12; i++) { const a = Math.random() * TWO_PI, s = 60 + Math.random() * 170; parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5, max: 0.5, col }); } }
+function drawParts(dt) {
+  for (const p of parts) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; }
+  parts = parts.filter((p) => p.life > 0); noStroke();
+  for (const p of parts) { fill(rgba(hex7(p.col), p.life / p.max)); rect(p.x - 2, p.y - 2, 4, 4); }
+}
+
+// ---------- drawing: tiles ----------
+function drawTile(t, x, y, s, a, wrong) {
+  const col = wrong ? TR.red : colKey(t.color), h = s / 2, k = s / BOARD_TILE_SIZE;
+  drawingContext.globalAlpha = a;
+  stroke(col); strokeWeight(1.6); fill(3, 10, 30, 210); chamfer(x - h, y - h, s, s, 12 * k);
+  stroke(rgba(hex7(col), 0.25)); strokeWeight(1); noFill(); corners(x - h + 6 * k, y - h + 6 * k, s - 12 * k, s - 12 * k, 10 * k);
+  glow(col, 10); hebTxt(t.glyph, x, y - 4 * k, DISPLAY_GLYPH_SIZE * k, col); noGlow();
+  if (OPT.values) { stroke(rgba(hex7(col), 0.55)); strokeWeight(1); fill(3, 10, 30, 230); chamfer(x - h + 7 * k, y - h + 7 * k, 34 * k, 17 * k, 4 * k); txt(String(t.value), x - h + 24 * k, y - h + 16 * k, 9 * k, col, CENTER, 400, 1); }
+  if (OPT.names && !(G && batchOf().hideNames)) { txt(t.name, x + 1.5, y + h - 14 * k, 8 * k, rgba(hex7(col), 0.85), CENTER, 400, 3); }
+  drawingContext.globalAlpha = 1;
+}
+function drawBoard(dt) {
+  const S = BOARD_TILE_SIZE, hinting = scene === 'play' && G.hintT > 0 && PLAYER_HINT_SHOWS_TILES;
+  for (const t of G.tiles) {
+    if (t.pop < 1) { t.pop = Math.min(1, t.pop + dt * 4); }
+    if (t.shakeT > 0) { t.shakeT -= dt; }
+    let a = 1, k;
+    if (!t.alive) {
+      if (t.dieT < 0 || t.dieT >= 0.3) { continue; }
+      t.dieT += dt; const d = Math.min(1, t.dieT / 0.3); k = 1 + d * 0.25; a = 1 - d;
+    } else { const pk = Math.max(0, Math.min(1, t.pop)); k = pk * pk * (3 - 2 * pk); }
+    if (k <= 0.01) { continue; }
+    const c = tileCenter(t), sx = t.shakeT > 0 ? Math.sin(t.shakeT * 60) * 6 * (t.shakeT / 0.35) : 0;
+    drawTile(t, c.x + sx, c.y, S * k, a, t.shakeT > 0);
+  }
+  if (hinting) { for (const t of validTiles()) { const c = tileCenter(t); focusBrackets(c.x, c.y, S * 0.5 + 2); } }
+  if (DBG.hitboxes) { noFill(); stroke(255, 0, 0, 160); strokeWeight(1); for (const t of G.tiles) { if (t.alive) { const c = tileCenter(t); rect(c.x - CONTROLS_TILE_HITBOX / 2, c.y - CONTROLS_TILE_HITBOX / 2, CONTROLS_TILE_HITBOX, CONTROLS_TILE_HITBOX); } } }
+}
+
+// ---------- drawing: the play screen ----------
+function drawHud(dt) {
+  const live = scene === 'play' && !paused && G.clearT < 0;
+  // top left: the clock (CHALLENGE) or the mode
+  if (G.mode === 'challenge') { meter(18, 30, 176, Math.max(0, G.time), PLAYER_TIME_MAX, 'TIME'); }
+  else { txt('MODE', 18, 14, 9, 'rgba(160,240,255,0.85)', LEFT, 400, 4); txt('TIMELESS', 18, 36, 18, TR.gn, LEFT, 200, 4); }
+  // top centre: level and the rule stack progress
+  const done = scene === 'play' || scene === 'clear' ? G.rules.length - 1 - G.phase + (G.clearT >= 0 ? 1 : 0) : 0;
+  txt('LEVEL ' + pad2(G.level) + '  //  ' + batchOf().title, width / 2 + 2, 16, 9, 'rgba(25,227,255,0.55)', CENTER, 400, 5);
+  pips(width / 2, 28, G.rules.length, done);
+  // top right: score + pause
+  counter(width - 66, 40, G.score, 'SCORE');
+  pauseHex(width - 35, 37, live ? () => { paused = true; } : null);
+  // the rule stack: one hex per rule, newest on the right
+  txt('RULE STACK', 18, 78, 8, 'rgba(160,240,255,0.7)', LEFT, 400, 3);
+  for (let k = 0; k < G.rules.length; k++) {
+    const x = 120 + k * 40, y = 78, isDone = k > G.phase || G.clearT >= 0, active = k === G.phase && G.clearT < 0;
+    const col = active ? TR.am : isDone ? TR.gn : 'rgba(25,227,255,0.45)';
+    if (active) { glow(TR.am, 10 + 6 * Math.sin(DUI.t * 6)); }
+    stroke(col); strokeWeight(active ? 1.8 : 1.2); fill(active ? 'rgba(255,185,56,0.14)' : 'rgba(3,10,30,0.6)'); hexagon(x, y, 14, HALF_PI); noGlow();
+    txt(String(k + 1), x + 0.5, y + 0.5, 11, col, CENTER, 400, 0);
+  }
+  // DO-T and his panel
+  const face = G.faceT > 0 ? G.face : (G.mode === 'challenge' && G.time < PLAYER_TIME_MAX * 0.2 ? 'strained' : 'happy');
+  dotRig.update(dt, 0, 0, 2.5, {}); dotRig.draw(78, 192, DISPLAY_DOT_RADIUS, { face, tool: 'light', aim: 2.5, lightOn: true });
+  const showText = G.hintT > 0 || DBG.ruleText, r = G.rules[G.phase], px = 150, pw = width - 168;
+  const pcol = G.flashT > 0 && Math.sin(G.flashT * 20) > 0 ? TR.am : showText ? TR.vi : TR.cy;
+  panel(px, 124, pw, 134, pcol);
+  if (G.clearT >= 0) { txt('BOARD CLEAR', px + 22, 162, 10, TR.gn, LEFT, 400, 8); txt('GOOD WORK', px + 22, 200, 30, '#FFFFFF', LEFT, 200, 8); }
+  else if (showText) {
+    txt((G.hintT > 0 ? 'HINT  //  ' : '') + 'RULE ' + (G.phase + 1), px + 22, 150, 10, TR.vi, LEFT, 400, 6);
+    wrapTxt(ruleSay(r), px + 22, 166, pw - 40, 16, '#FFFFFF', 21, LEFT, 300);
+  } else {
+    txt('NOW FOLLOW', px + 22, 150, 10, TR.cy2, LEFT, 400, 8);
+    txt(DISPLAY_SHOW_RULE_NUMBER ? 'RULE ' + (G.phase + 1) : 'RULE ?', px + 22, 192, 34, '#FFFFFF', LEFT, 200, 10);
+    txt(G.phase === 0 ? 'THE LAST RULE  //  CLEAR THE BOARD' : 'FROM MEMORY  //  THEN RULE ' + G.phase, px + 22, 232, 9, TR_SUB, LEFT, 400, 3);
+  }
+  // bottom: stats, hint, combo
+  txt('TILES  ' + aliveTiles().length + '      MISSES  ' + G.levelMist, width / 2 + 2, 800, 10, TR_SUB, CENTER, 400, 4);
+  if (G.mode === 'timeless') { uiBtn(40, 832, 180, 52, 'HINT', live ? () => showHint(true) : null, { col: TR.vi, size: 14 }); }
+  else { txt('WRONG TAP  //  -' + PLAYER_TIME_PENALTY + ' SEC', 40, 858, 9, rgba(TR.red, 0.8), LEFT, 400, 3); }
+  AhadFeel.drawCombo(width - 96, 846);
+}
+function drawGame(dt) {
+  background(TR.bg); gridBack(30, 12);
+  push(); AhadFeel.applyShake(); drawBoard(dt); drawParts(dt); pop();
+  drawHud(dt);
+}
+
+// ---------- the NEW RULE card ----------
+function drawExamples(r, y) {
+  let ex = [];
+  const soundRule = ['sound', 'silent', 'two'].includes(r.type);
+  if (r.type === 'seq') { ex = (r.dir === 'low' ? ['ALEF', 'BET', 'GIMEL', 'DALET', 'HE'] : ['TAV', 'SHIN', 'RESH', 'QOF', 'TSADI']).map((nm) => [LETTER_INFO[nm], TR.cy]); }
+  else if (r.type === 'color') { ex = ['ALEF', 'NUN', 'TAV'].map((nm) => [LETTER_INFO[nm], colKey(r.color)]); }
+  else { const cn = ruleColor(r); ex = LETTERS.filter((L) => ruleMatch(r, { name: L[1], value: L[2], color: cn || 'CYAN' })).slice(0, 9).map((L) => [LETTER_INFO[L[1]], cn ? colKey(cn) : TR.cy]); }
+  const s = 44, gap = 6, x0 = width / 2 - (ex.length * (s + gap) - gap) / 2;
+  ex.forEach((e, i) => {
+    const x = x0 + i * (s + gap); stroke(e[1]); strokeWeight(1.3); fill(3, 10, 30, 210); chamfer(x, y, s, s, 6);
+    hebTxt(e[0].glyph, x + s / 2, y + s / 2 - 2, 26, e[1]);
+    if (r.type !== 'color') { txt(soundRule ? soundLabel(e[0].name) : r.type === 'letter' ? e[0].name : String(e[0].value), x + s / 2 + 1, y + s + 11, 8, TR_SUB, CENTER, 400, 1); }
+  });
+  if (r.type === 'seq') { txt(r.dir === 'low' ? '1  >  2  >  3  ...' : '400  >  300  >  200  ...', width / 2 + 2, y + s + 30, 10, TR.cy2, CENTER, 400, 3); return y + s + 40; }
+  return y + s + 24;
+}
+function drawAnnounce(dt) {
+  background(TR.bg); gridBack(30);
+  const r = G.rules[G.rules.length - 1], n = G.info.n, b = batchOf(), fresh = n === 1;
+  txt((G.mode === 'challenge' ? 'CHALLENGE' : 'TIMELESS') + '  //  ' + b.title, width / 2 + 4, 46, 10, TR.cy2, CENTER, 400, 8);
+  heading('LEVEL ' + pad2(G.level), 86);
+  dotRig.update(dt, 0, 0, 2.5, {}); dotRig.draw(88, 222, 40, { face: fresh ? 'heart' : 'happy', tool: 'light', aim: 2.5, lightOn: true });
+  // DO-T's line: the batch intro when a new stack starts, otherwise a Hebrew fact
+  txt(fresh ? 'NEW STACK  //  ' + b.title : 'DID YOU KNOW?', 158, 182, 9, fresh ? TR.mg : TR.am, LEFT, 400, 5);
+  wrapTxt(fresh ? b.intro : G.fact, 158, 196, width - 194, 13, TR_TXT, 18, LEFT, 300);
+  const pBottom = Math.min(770, Math.max(560, (G.annEnd || 740) + 22));
+  panel(36, 290, width - 72, pBottom - 290, TR.am);
+  txt('NEW RULE', width / 2 + 4, 320, 11, TR.am, CENTER, 400, 8);
+  glow(TR.am, 12); stroke(TR.am); strokeWeight(1.6); fill(3, 10, 30, 210); hexagon(width / 2, 366, 30, HALF_PI); noGlow();
+  txt(String(n), width / 2 + 1, 367, 24, '#FFFFFF', CENTER, 200, 0);
+  let y = wrapTxt(ruleSay(r).toUpperCase(), 66, 408, width - 132, 18, '#FFFFFF', 25, CENTER, 200);
+  rule(width / 2, y + 6, 120);
+  const P = verseOf(r);
+  if (P) { y = wrapTxt('"' + P.kjv + '"', 70, y + 20, width - 140, 14, TR.cy2, 20, CENTER, 300); txt('PSALM 119:' + r.verse + '  (KJV)', width / 2 + 2, y + 8, 9, TR_SUB, CENTER, 400, 3); y += 18; }
+  y = drawExamples(r, y + 20);
+  const order = []; for (let k = n - 1; k >= 1; k--) { order.push(k); }
+  const body = n === 1 ? 'Rule 1 always clears the whole board.' : 'Do this first. Then follow rule ' + order.join(', then rule ') + ', from memory.';
+  G.annEnd = wrapTxt(body, 66, y + 2, width - 132, 13, TR_TXT, 19, CENTER, 300);
+  uiBtn(width / 2 - 130, pBottom + 22, 260, 52, 'START', beginPlay, { col: TR.am, hot: true });
+  uiBtn(width / 2 - 90, pBottom + 86, 180, 44, 'TITLE', () => goScene('title'), { size: 13 });
+  txt('TAP START  //  OR PRESS ENTER', width / 2 + 2, pBottom + 152, 9, rgba(TR.cy, 0.5), CENTER, 400, 4);
+}
+
+// ---------- overlays: clear, pause, time up, win ----------
+function statRows(rows, y) { for (const r of rows) { txt(r[0], width / 2 - 20, y, 11, TR_TXT, RIGHT, 400, 4); txt(r[1], width / 2 + 10, y, 16, r[2] || '#FFFFFF', LEFT, 200, 2); y += 34; } return y; }
+function openCard(i, back) { bookIdx = i; cardBack = back; goScene('card'); }
+function drawClear() {
+  dim(215);
+  const b = batchOf(), batchEnd = G.info.n === b.rules.length, last = G.level >= TOTAL_LEVELS;
+  panel(36, 196, width - 72, 530, TR.gn);
+  txt('LEVEL ' + pad2(G.level) + '  //  COMPLETE', width / 2 + 4, 232, 11, TR.gn, CENTER, 400, 8);
+  txt('BOARD CLEAR', width / 2 + 4, 276, 30, '#FFFFFF', CENTER, 200, 8);
+  rule(width / 2, 306, 120);
+  let y = statRows([['RULES FOLLOWED', String(G.info.n), TR.gn], ['MISSES', String(G.levelMist), G.levelMist ? TR.am : TR.gn], ['SCORE', String(G.score), TR_GOLD], ['BEST STREAK', 'x' + AhadFeel.combo.best, TR.cy2]], 340);
+  if (G.newLetters.length) {
+    txt('NEW IN YOUR LETTER BOOK  //  TAP ONE', width / 2 + 4, y + 6, 9, TR.gn, CENTER, 400, 4);
+    const list = G.newLetters.slice(0, 6), s = 56, gap = 8, x0 = width / 2 - (list.length * (s + gap) - gap) / 2;
+    list.forEach((nm, i) => {
+      const L = LETTER_INFO[nm], x = x0 + i * (s + gap);
+      uiBtn(x, y + 22, s, s, '', () => openCard(L.i, 'clear'), { col: TR.gn });
+      hebTxt(L.glyph, x + s / 2, y + 22 + s / 2 - 3, 30, '#FFFFFF'); txt(nm, x + s / 2 + 1, y + 22 + s + 10, 7, TR_SUB, CENTER, 400, 2);
+    });
+    if (G.newLetters.length > 6) { txt('+' + (G.newLetters.length - 6) + ' MORE IN THE BOOK', width / 2 + 2, y + 22 + s + 28, 9, TR_SUB, CENTER, 400, 3); }
+  } else if (batchEnd && !last) {
+    wrapTxt('You held ' + G.info.n + ' rules at once. Next, a new stack starts: ' + RULE_BATCHES[G.info.batch + 1].title + '.', 76, y + 4, width - 152, 13, TR_TXT, 19, CENTER, 300);
+  }
+  uiBtn(width / 2 - 130, 640, 260, 52, last ? 'FINISH' : 'NEXT RULE', nextLevel, { col: TR.am, hot: true });
+  uiBtn(width / 2 - 140, 744, 132, 44, 'TITLE', () => goScene('title'), { size: 12 });
+  uiBtn(width / 2 + 8, 744, 132, 44, 'LETTER BOOK', () => { bookBack = 'clear'; goScene('book'); }, { col: TR.vi, size: 11, ls: 3 });
+}
+function drawPause() {
+  dim(232); gridBack(30); heading('PAUSED', 90);
+  txt('LEVEL ' + pad2(G.level) + '  //  RULE STACK ' + G.info.n, width / 2 + 4, 190, 13, TR.am, CENTER, 300, 4);
+  txt('SCORE  ' + G.score + '      MISSES  ' + G.mistakes, width / 2 + 2, 224, 11, TR_TXT, CENTER, 300, 3);
+  const bx = width / 2 - 130;
+  uiBtn(bx, 270, 260, 52, 'RESUME', () => { paused = false; }, { col: TR.cy });
+  uiBtn(bx, 338, 260, 52, 'RESTART LEVEL', () => { paused = false; startLevel(G.level); }, { col: TR.am });
+  uiBtn(bx, 406, 260, 52, 'HOW TO PLAY', () => { howtoBack = scene; goScene('howto'); }, { col: TR.gn });
+  const tg = (x, y, label, key, after) => uiBtn(x, y, 125, 44, label + '  ' + (OPT[key] ? 'ON' : 'OFF'), () => { OPT[key] = !OPT[key]; if (after) { after(); } saveAll(); }, { col: OPT[key] ? TR.gn : TR_OFF, size: 11, ls: 3 });
+  txt('SETTINGS', width / 2 + 4, 486, 9, 'rgba(160,240,255,0.7)', CENTER, 400, 5);
+  tg(bx, 504, 'SOUND', 'sound'); tg(bx + 135, 504, 'VALUES', 'values');
+  tg(bx, 558, 'NAMES', 'names'); tg(bx + 135, 558, 'GLITCH', 'glitch', () => AhadFeel.config({ glitch: OPT.glitch }));
+  uiBtn(bx, 636, 260, 52, 'QUIT TO TITLE', () => { paused = false; goScene('title'); }, { col: TR.mg });
+  txt('MADE BY PETER VENOIT, JR.  //  2026', width / 2 + 2, height - 30, 9, rgba(TR.am, 0.6), CENTER, 400, 4);
+}
+function drawOver(dt) {
+  const k0 = Math.min(1, sceneT / 0.7), k = k0 * k0 * (3 - 2 * k0);
+  if (sceneT < 0.9) { shutters(k, 'TIME UP'); return; }
+  background(TR.bg); gridBack(30, 12);
+  txt('CHALLENGE', width / 2 + 4, 110, 11, TR.red, CENTER, 400, 9);
+  txt('TIME UP', width / 2 + 6, 164, 46, '#FFFFFF', CENTER, 200, 16);
+  txt('REACHED LEVEL ' + pad2(G.level), width / 2 + 4, 214, 12, TR.am, CENTER, 400, 6);
+  rule(width / 2, 240, 130);
+  tickRing(width / 2, 380, 92); dotRig.update(dt, 0, 0, 0.6, {}); dotRig.draw(width / 2, 380, 58, { face: 'defeated', tool: 'light', aim: 0.6, lightOn: false });
+  statRows([['BOARDS CLEARED', String(G.cleared), TR.gn], ['SCORE', String(G.score), TR_GOLD], ['BEST STREAK', 'x' + AhadFeel.combo.best, TR.cy2], ['BEST LEVEL', String(BEST.challenge), TR.am]], 540);
+  uiBtn(width / 2 - 130, 712, 260, 52, 'TRY AGAIN', () => newGame('challenge', 1), { col: TR.am, hot: true });
+  uiBtn(width / 2 - 90, 780, 180, 44, 'TITLE', () => goScene('title'), { size: 13 });
+}
+function drawWin(dt) {
+  background(TR.bg); gridBack(30, 12);
+  txt(G.mode === 'challenge' ? 'CHALLENGE' : 'TIMELESS', width / 2 + 4, 110, 11, TR.cy2, CENTER, 400, 9);
+  txt('ALL ' + TOTAL_LEVELS + ' BOARDS', width / 2 + 6, 164, 38, '#FFFFFF', CENTER, 200, 12);
+  txt('COMPLETE', width / 2 + 4, 212, 14, TR.am, CENTER, 400, 8);
+  rule(width / 2, 238, 130);
+  tickRing(width / 2, 376, 92); dotRig.update(dt, 0, 0, -0.6, {}); dotRig.draw(width / 2, 376, 58, { face: 'heart', tool: 'light', aim: -0.6, lightOn: true });
+  const y = statRows([['SCORE', String(G.score), TR_GOLD], ['MISSES', String(G.mistakes), TR.am], ['BEST STREAK', 'x' + AhadFeel.combo.best, TR.cy2]], 536);
+  wrapTxt('Every letter has a number and a place. Psalm 119 walks through all 22.', 70, y + 4, width - 140, 13, TR_TXT, 19, CENTER, 300);
+  uiBtn(width / 2 - 130, 712, 260, 52, G.mode === 'challenge' ? 'PLAY AGAIN' : 'TRY CHALLENGE', () => newGame('challenge', 1), { col: TR.am, hot: true });
+  uiBtn(width / 2 - 90, 780, 180, 44, 'TITLE', () => goScene('title'), { size: 13 });
+}
+
+// ---------- the Letter Book: all 22 letters, laid out right to left ----------
+function drawBook() {
+  background(TR.bg); gridBack(30); heading('LETTER BOOK', 80);
+  const met = LETTERS.filter((L) => MET[L[1]]).length;
+  txt(met + ' OF 22 LETTERS MET', width / 2 + 4, 158, 11, TR.am, CENTER, 400, 5);
+  txt('<  READ RIGHT TO LEFT, LIKE HEBREW', width / 2 + 2, 182, 9, TR_SUB, CENTER, 400, 4);
+  const cols = 5, s = 80, gap = 10, x0 = (width - (cols * s + (cols - 1) * gap)) / 2, y0 = 204;
+  LETTERS.forEach((L, i) => {
+    const c = i % cols, row = Math.floor(i / cols), x = x0 + (cols - 1 - c) * (s + gap), y = y0 + row * (s + gap), on = !!MET[L[1]];
+    uiBtn(x, y, s, s, '', () => openCard(i, 'book'), { col: on ? TR.gn : 'rgba(25,227,255,0.4)' });
+    hebTxt(L[0], x + s / 2, y + s / 2 - 7, 38, on ? '#FFFFFF' : rgba(TR.cy2, 0.45));
+    txt(L[1], x + s / 2 + 1, y + s - 13, 7, on ? rgba(TR.gn, 0.9) : TR_SUB, CENTER, 400, 2);
+  });
+  wrapTxt('Tap a letter to open its card. A letter turns green when you tap it right in a game.', 60, 666, width - 120, 13, TR_TXT, 19, CENTER, 300);
+  uiBtn(width / 2 - 90, 820, 180, 48, 'BACK', () => goScene(bookBack), { size: 14 });
+}
+// ---------- one letter's card ----------
+function drawCard() {
+  const L = LETTER_INFO[LETTERS[bookIdx][1]], P = L.psalm, met = !!MET[L.name];
+  background(TR.bg); gridBack(30, 12);
+  txt('LETTER ' + pad2(bookIdx + 1) + ' OF 22' + (met ? '  //  MET' : ''), width / 2 + 4, 40, 10, met ? TR.gn : TR.cy2, CENTER, 400, 8);
+  const s = 140, x = width / 2 - s / 2, y = 62;
+  stroke(TR.am); strokeWeight(1.6); fill(3, 10, 30, 220); chamfer(x, y, s, s, 16); stroke(rgba(TR.am, 0.25)); strokeWeight(1); noFill(); corners(x + 8, y + 8, s - 16, s - 16, 14);
+  glow(TR.am, 14); hebTxt(L.glyph, width / 2, y + s / 2 - 6, 96, TR_GOLD); noGlow();
+  txt(L.name, width / 2 + 6, 238, 30, '#FFFFFF', CENTER, 200, 10);
+  const cw = (width - 72 - 20) / 3;
+  [['SOUND', soundLabel(L.name)], ['VALUE', String(L.value)], ['FINAL FORM', L.final ? '' : 'NONE']].forEach((c, i) => {
+    const cx = 36 + i * (cw + 10); stroke(rgba(TR.cy, 0.6)); strokeWeight(1.2); fill(3, 10, 30, 200); chamfer(cx, 268, cw, 56, 9);
+    txt(c[0], cx + cw / 2 + 2, 284, 8, rgba(TR.cy2, 0.8), CENTER, 400, 3);
+    if (i === 2 && L.final) { hebTxt(L.final, cx + cw / 2, 306, 26, TR_GOLD); } else { txt(c[1], cx + cw / 2 + 1, 306, 17, '#FFFFFF', CENTER, 200, 2); }
+  });
+  let yy = wrapTxt(L.soundText + '  (Modern Hebrew)', 40, 338, width - 80, 13, TR_TXT, 18, CENTER, 300);
+  const mean = LETTER_NAME_MEANINGS[L.name];
+  if (mean) { txt('NAME MEANING  //  TRADITIONAL READING', width / 2 + 3, yy + 8, 8, TR.am, CENTER, 400, 3); yy = wrapTxt(mean, 40, yy + 20, width - 80, 13, TR_TXT, 18, CENTER, 300); }
+  // Psalm 119: this letter's part
+  const py = Math.max(yy + 12, 382);
+  panel(26, py, width - 52, Math.min(772, Math.max(py + 240, (window.cardEnd || 740) + 26)) - py, TR.cy);
+  txt('PSALM 119:' + P.from + '-' + P.to, width / 2 + 4, py + 26, 11, TR.cy2, CENTER, 400, 6);
+  txt('KJV HEADING:  ' + P.heading + (P.headingAlt ? '   (SOME COPIES: ' + P.headingAlt + ')' : ''), width / 2 + 2, py + 46, 8, TR_SUB, CENTER, 400, 3);
+  let vy = py + 64;
+  if (P.all8) { vy = wrapTxt('In the Hebrew, all 8 verses of this part begin with ' + L.name + '.', 52, vy, width - 104, 13, TR_TXT, 18, CENTER, 300); }
+  txt('FIRST WORD IN THE HEBREW (WLC)  //  STRONG\'S ' + P.strongs, width / 2 + 2, vy + 12, 8, rgba(TR.am, 0.85), CENTER, 400, 2);
+  textFont(DISPLAY_POINTED_FONT); textSize(40); try { textWeight(400); } catch (_) {} lspace(0); fill(TR_GOLD); noStroke(); textAlign(CENTER, CENTER); text(P.firstWord, width / 2, vy + 50);
+  vy = wrapTxt('"' + P.kjv + '"', 52, vy + 86, width - 104, 14, TR.cy2, 20, CENTER, 300);
+  txt('PSALM 119:' + P.from + '  (KJV)', width / 2 + 2, vy + 8, 9, TR_SUB, CENTER, 400, 3); window.cardEnd = vy + 8;
+  const prev = (bookIdx + 21) % 22, next = (bookIdx + 1) % 22;
+  uiBtn(30, 800, 140, 48, 'PREV', () => { bookIdx = prev; }, { size: 12 });
+  uiBtn(width / 2 - 80, 800, 160, 48, 'BACK', () => goScene(cardBack), { col: TR.vi, size: 13 });
+  uiBtn(width - 170, 800, 140, 48, 'NEXT', () => { bookIdx = next; }, { size: 12 });
+  txt(LETTERS[prev][1] + '  <  ' + L.name + '  >  ' + LETTERS[next][1], width / 2 + 2, 876, 8, TR_SUB, CENTER, 400, 3);
+}
+
+// ---------- title, how to play, debug ----------
+function drawTitle(dt) {
+  titleBackdrop();
+  const cx = width / 2, cy = 278;
+  tickRing(cx, cy, 138);
+  for (let i = 0; i < LETTERS.length; i++) { const a = -i / LETTERS.length * TWO_PI + DUI.t * -0.05 - HALF_PI; hebTxt(LETTERS[i][0], cx + Math.cos(a) * 196, cy + Math.sin(a) * 196, 19, rgba(MET[LETTERS[i][1]] ? TR.gn : TR.cy2, 0.6)); }
+  titleRig.update(dt, 0, 0, 0.55, {}); titleRig.draw(cx, cy, DISPLAY_DOT_TITLE_RADIUS, { face: 'happy', tool: 'light', aim: 0.55, lightOn: true });
+  txt('ALEF-BET', cx + 7, 506, 42, '#FFFFFF', CENTER, 200, 14);
+  txt('RULES', cx + 7, 554, 42, TR.cy2, CENTER, 200, 14);
+  rule(cx, 584, 130);
+  txt('LEARN THE HEBREW LETTERS WITH DO-T', cx + 3, 604, 10, rgba(TR.am, 0.85), CENTER, 400, 5);
+  uiBtn(cx - 130, 632, 260, 48, 'PLAY  //  TIMELESS', () => newGame('timeless', DEBUG_ON ? DEBUG_START_LEVEL : 1), { col: TR.cy });
+  uiBtn(cx - 130, 690, 260, 48, 'CHALLENGE  //  TIMED', () => newGame('challenge', DEBUG_ON ? DEBUG_START_LEVEL : 1), { col: TR.am });
+  uiBtn(cx - 130, 748, 260, 48, 'LETTER BOOK', () => { bookBack = 'title'; goScene('book'); }, { col: TR.gn });
+  uiBtn(cx - 130, 806, 260, 48, 'HOW TO PLAY', () => { howtoBack = 'title'; goScene('howto'); }, { col: TR.vi });
+  if (SHOW_DEBUG_BUTTON) { uiBtn(cx - 130, 864, 260, 38, 'DEBUG MENU', () => goScene('debug'), { col: TR.am, size: 12 }); }
+  txt('BEST  //  TIMELESS LV ' + (BEST.timeless || 0) + '    CHALLENGE LV ' + (BEST.challenge || 0) + '    LETTERS ' + LETTERS.filter((L) => MET[L[1]]).length + '/22', cx + 2, 922, 8, TR_SUB, CENTER, 400, 3);
+  txt('MADE BY PETER VENOIT, JR.  //  2026', cx + 2, 944, 9, rgba(TR.am, 0.6), CENTER, 400, 4);
+}
+function drawHowto() {
+  background(TR.bg); gridBack(30); heading('HOW TO PLAY', 80);
+  panel(26, 150, width - 52, 596, TR.cy);
+  const steps = [
+    'DO-T gives you one new rule each level. Read it carefully.',
+    'Tap the tiles that follow the NEWEST rule first.',
+    'Then follow the rule before it, and the one before that, down to rule 1. Rule 1 always clears the board.',
+    'Rules stack up. Every 10 levels a new stack starts: NUMBERS, ALEF-BET ORDER, SOUNDS, then PSALM 119.',
+    'Every letter you tap right goes into your LETTER BOOK, with its sound, its number and its part of Psalm 119.'
+  ];
+  let y = 176;
+  steps.forEach((s, i) => {
+    stroke(TR.am); strokeWeight(1.4); fill(3, 10, 30, 210); hexagon(62, y + 9, 13, HALF_PI); txt(String(i + 1), 62.5, y + 9.5, 11, TR.am, CENTER, 400, 0);
+    y = wrapTxt(s, 88, y, width - 150, 14, TR_TXT, 20, LEFT, 300) + 10;
+  });
+  txt('TIMELESS', 52, y + 8, 10, TR.gn, LEFT, 400, 6); y = wrapTxt('No clock. Tap HINT if you forget a rule, and DO-T will show it.', 52, y + 22, width - 110, 13, TR_TXT, 18, LEFT, 300) + 6;
+  txt('CHALLENGE', 52, y + 8, 10, TR.am, LEFT, 400, 6); y = wrapTxt('A clock runs down. Correct taps add time. Wrong taps cost a second.', 52, y + 22, width - 110, 13, TR_TXT, 18, LEFT, 300) + 6;
+  txt('PSALM 119', 52, y + 8, 10, TR.cy2, LEFT, 400, 6);
+  wrapTxt('Psalm 119 is an Alef-Bet psalm: 22 parts, one for each letter. "Thy word have I hid in mine heart, that I might not sin against thee." (Psalm 119:11, KJV)', 52, y + 22, width - 110, 13, TR_TXT, 18, LEFT, 300);
+  uiBtn(width / 2 - 90, 772, 180, 48, 'BACK', () => goScene(howtoBack), { size: 14 });
+}
+function drawDebug() {
+  background(TR.bg); gridBack(30); heading('DEBUG', 80);
+  txt('FOR TESTING  //  NOT PART OF THE GAME', width / 2 + 2, 150, 10, TR_TXT, CENTER, 300, 3);
+  const flag = (y, label, key) => uiBtn(40, y, width - 80, 42, label + ':  ' + (DBG[key] ? 'ON' : 'OFF'), () => { DBG[key] = !DBG[key]; }, { col: DBG[key] ? TR.gn : TR.cy, size: 12, hot: DBG[key] });
+  flag(176, 'SHOW RULE TEXT', 'ruleText'); flag(226, 'INFINITE TIME', 'infinite'); flag(276, 'SHOW HITBOXES', 'hitboxes');
+  uiBtn(40, 326, width - 80, 42, 'JUMP MODE:  ' + debugMode.toUpperCase(), () => { debugMode = debugMode === 'timeless' ? 'challenge' : 'timeless'; }, { col: TR.vi, size: 12 });
+  uiBtn(40, 376, (width - 90) / 2, 42, 'MEET ALL LETTERS', () => { for (const L of LETTERS) { MET[L[1]] = true; } saveAll(); }, { col: TR.gn, size: 11, ls: 3 });
+  uiBtn(50 + (width - 90) / 2, 376, (width - 90) / 2, 42, 'CLEAR LETTER BOOK', () => { for (const k in MET) { delete MET[k]; } saveAll(); }, { col: TR.red, size: 11, ls: 3 });
+  txt('JUMP TO LEVEL', width / 2 + 4, 440, 10, TR.cy2, CENTER, 400, 6);
+  const cols = 8, gap = 8, bw = (width - 80 - gap * (cols - 1)) / cols;
+  for (let i = 0; i < TOTAL_LEVELS; i++) { uiBtn(40 + (i % cols) * (bw + gap), 458 + Math.floor(i / cols) * 48, bw, 40, String(i + 1), () => newGame(debugMode, i + 1), { size: 12, ls: 1 }); }
+  uiBtn(width / 2 - 90, 820, 180, 48, 'BACK', () => goScene('title'), { size: 14 });
+}
+
+// ---------- p5 ----------
+function loadFonts() {
+  if (document.getElementById('alef-fonts')) { return; }
+  const l = document.createElement('link'); l.id = 'alef-fonts'; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=Exo+2:wght@200;300;400;500&family=Frank+Ruhl+Libre:wght@400;500&family=Noto+Serif+Hebrew:wght@400;500&display=swap';
+  document.head.appendChild(l);
+}
+function fitCanvas() { const k = Math.min(window.innerWidth / width, window.innerHeight / height); cnv.elt.style.width = (width * k) + 'px'; cnv.elt.style.height = (height * k) + 'px'; }
+function onPointerDown(e) {
+  e.preventDefault(); sndInit(); try { window.focus(); } catch (_) {}
+  const r = cnv.elt.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * width, y = (e.clientY - r.top) / r.height * height;
+  handleTap(x, y);
+}
+function handleTap(x, y) {
+  if (DUI.tap(x, y)) { SFX.ui(); return; }
+  if (scene === 'play' && !paused) { const t = tileAt(x, y); if (t) { tapTile(t); } }
+}
+function onKeyDown(e) {
+  sndInit();
+  if (e.key === 'Escape') {
+    if (scene === 'play' && G && G.clearT < 0) { paused = !paused; }
+    else if (scene === 'howto') { goScene(howtoBack); } else if (scene === 'book') { goScene(bookBack); } else if (scene === 'card') { goScene(cardBack); } else if (scene === 'debug' || scene === 'announce') { goScene('title'); }
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    if (scene === 'announce') { beginPlay(); } else if (scene === 'clear') { nextLevel(); }
+    e.preventDefault();
+  } else if (scene === 'card' && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { bookIdx = (bookIdx + (e.key === 'ArrowRight' ? 1 : 21)) % 22;
+  } else if ((e.key === 'h' || e.key === 'H') && scene === 'play' && !paused && G.mode === 'timeless') { showHint(true); }
+}
+function setup() {
+  cnv = createCanvas(DISPLAY_W, DISPLAY_H);
+  loadFonts();
+  document.body.style.margin = '0'; document.body.style.background = TR.bg; document.body.style.overflow = 'hidden';
+  document.body.style.display = 'flex'; document.body.style.alignItems = 'center'; document.body.style.justifyContent = 'center'; document.body.style.height = '100%'; document.documentElement.style.height = '100%';
+  cnv.elt.style.touchAction = 'none';
+  fitCanvas(); window.addEventListener('resize', fitCanvas);
+  cnv.elt.addEventListener('pointerdown', onPointerDown, { passive: false });
+  cnv.elt.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('keydown', onKeyDown);
+  dotRig = new DotRig(); titleRig = new DotRig();
+  loadAll();
+  AhadFeel.config({ glitch: OPT.glitch, impact: false });
+  AhadFeel.hooks.onStep = (n) => SFX.good(n);
+  AhadFeel.hooks.onTier = () => { if (G) { setFace('heart', 1.2); } };
+  AhadFeel.hooks.onBonus = (extra) => { if (G) { G.score += extra * PLAYER_POINTS_COMBO_BONUS; } };
+}
+function draw() {
+  const dt = Math.min(0.05, (deltaTime || 16) / 1000);
+  DUI.frame(); sceneT += dt; AhadFeel.update(dt);
+  if (scene === 'title') { drawTitle(dt); }
+  else if (scene === 'howto') { drawHowto(); }
+  else if (scene === 'debug') { drawDebug(); }
+  else if (scene === 'book') { drawBook(); }
+  else if (scene === 'card') { drawCard(); }
+  else if (scene === 'announce') { drawAnnounce(dt); }
+  else if (scene === 'over') { drawOver(dt); }
+  else if (scene === 'win') { drawWin(dt); }
+  else {
+    if (scene === 'play' && !paused && !AhadFeel.frozen()) { updatePlay(dt); }
+    drawGame(dt);
+    if (scene === 'clear') { drawClear(); }
+    if (paused && scene === 'play') { drawPause(); }
+  }
+  if (scene === 'play' || scene === 'clear') { AhadFeel.drawGreatJob(width / 2, 150); }       // above the BOARD CLEAR card, never on top of its numbers
+  AhadFeel.applyPostFx();
+  image(DUI.fx(), 0, 0, width, height);
+}
+
+// ---------- test hooks (used by the automated checks; harmless in play) ----------
+window.ALEF = {
+  get scene() { return scene; }, get G() { return G; }, get paused() { return paused; },
+  start(mode, level) { newGame(mode || 'timeless', level || 1); }, begin() { beginPlay(); },
+  tapValid() { const v = validTiles(); if (v.length) { tapTile(v[0]); return true; } return false; },
+  tapWrong() { const v = validTiles(), w = aliveTiles().find((t) => !v.includes(t)); if (w) { tapTile(w); return true; } return false; },
+  tapAt(x, y) { handleTap(x, y); }, next() { nextLevel(); }, go(s) { goScene(s); }, pause(p) { paused = p; },
+  card(i, back) { openCard(i, back || 'book'); }, book() { bookBack = 'title'; goScene('book'); }, met: MET, facts: FACTS,
+  rule: (r, t) => ruleMatch(r, t), board: (lv) => { const info = levelInfo(lv), b = makeBoard(info.rules); return scoreBoard(b, info.rules); }
+};
+
+</script>
